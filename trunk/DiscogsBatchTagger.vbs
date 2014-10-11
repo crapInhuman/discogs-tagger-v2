@@ -3,7 +3,13 @@ Option Explicit
 ' Discogs Batch Tagger Script for MediaMonkey ( crap_inhuman with a little help from my friends Let & eepman )
 '
 
-Const VersionStr = "v2.14"
+Const VersionStr = "v2.15"
+
+'Changes from 2.14 to 2.15 by crap_inhuman in 05.2014
+'	Adjust the script for fetching the small album art
+'	Adjust the script for removing leading and trailing spaces in Extra Artists
+'	Add option to turn off subtrack detection
+
 
 'Changes from 2.13 to 2.14 by crap_inhuman in 04.2014
 '		Added simple routine to check and remove point in track positions (1. , 2. , 3. )
@@ -11,19 +17,23 @@ Const VersionStr = "v2.14"
 '		Max count for releases is set to 250
 '		Renamed the button names
 
+
 'Changes from 2.12 to 2.13 by crap_inhuman in 04.2014
 '		Bug removed: Filter doesn't work correctly
 '		There's no max count for release results
 '		Bug removed: Artist releases and Label releases work again
+
 
 'Changes from 2.11 to 2.12 by crap_inhuman in 03.2014
 '		Moving the tracks with the Up and Down Button now work
 '		Bug removed: Sub-Track do not select(set) the song
 '		Added the option for switching the last artist separator ("&" or "chosen separator")
 
+
 'Changes from 2.10 to 2.11 by crap_inhuman in 03.2014
 '		Removed bug with more than one artist for a title
 '		Added simple routine to check for false position separators
+
 
 'Changes from 1.01 to 2.10 by crap_inhuman in 02.2014
 '		Keywords are now not case sensitive
@@ -35,14 +45,17 @@ Const VersionStr = "v2.14"
 '		Display the number of matched releases and which one you are viewing in the search bar
 '		and much more..
 
+
 'Changes from 1.01 to 2.10 by crap_inhuman in 02.2014 (not released)
 		'Changed the image access method
 
+		
 'Changes from 1.00 to 1.01 by crap_inhuman in 10.2013 (not released)
 '		Removed bug in extra artist assignment
 '		Added 'Don't save' and 4 more fields for saving release-number
 '		Added 2 options: Process only Discogs releases, Process no Discogs releases
 '		Options now show at start of script
+
 
 'First Version 1.00 by crap_inhuman in 09.2013 (not released)
 '		The date and original date tags now always been updated, if the option set (e.g. if the date tag at discogs is blank , the date of the tagged album will be blank too
@@ -85,7 +98,7 @@ Dim CheckCountry, CheckCover, CheckSmallCover, CheckStyle, CheckCatalog, CheckRe
 Dim CheckComposer, CheckConductor, CheckProducer, CheckDiscNum, CheckTrackNum, CheckFormat, CheckUseAnv, CheckYearOnlyDate
 Dim CheckForceNumeric, CheckSidesToDisc, CheckForceDisc, CheckNoDisc, CheckLeadingZero, CheckVarious, TxtVarious
 Dim CheckTitleFeaturing, CheckComment, CheckFeaturingName, TxtFeaturingName, CheckOriginalDiscogsTrack
-Dim CheckUnselectNoTrackPos, CheckStyleField, CheckNotAlwaysSaveImage
+Dim CheckGroupingIndexTrack, CheckStyleField, CheckNotAlwaysSaveImage, CheckTurnOffSubTrack, IndexTrack
 Dim SubTrackNameSelection
 Dim CountryFilterList, MediaTypeFilterList, MediaFormatFilterList, YearFilterList
 Dim LyricistKeywords, ConductorKeywords, ProducerKeywords, ComposerKeywords, FeaturingKeywords
@@ -104,7 +117,7 @@ Dim AlbumArtURL, AlbumArtThumbNail
 Dim iMaxTracks
 Dim iAutoTrackNumber, iAutoDiscNumber
 Dim LastDisc
-Dim SelectAll, UnselectedTracks(1000)
+Dim SelectAll, UnselectedTracks(1000), SelectedIndexTracks(1000)
 
 Dim ReleaseTag, CountryTag, CatalogTag, FormatTag
 Dim OriginalDate, ReleaseDate, Separator
@@ -282,8 +295,8 @@ Sub BatchDiscogsSearch()
 		If ini.StringValue("DiscogsAutoTagWeb","CheckComment") = "" Then
 			ini.BoolValue("DiscogsAutoTagWeb","CheckComment") = True
 		End If
-		If ini.StringValue("DiscogsAutoTagWeb","CheckUnselectNoTrackPos") = "" Then
-			ini.BoolValue("DiscogsAutoTagWeb","CheckUnselectNoTrackPos") = True
+		If ini.StringValue("DiscogsAutoTagWeb","CheckGroupingIndexTrack") = "" Then
+			ini.BoolValue("DiscogsAutoTagWeb","CheckGroupingIndexTrack") = True
 		End If
 		If ini.StringValue("DiscogsAutoTagWeb","SubTrackNameSelection") = "" Then
 			ini.BoolValue("DiscogsAutoTagWeb","SubTrackNameSelection") = False
@@ -419,7 +432,7 @@ Sub BatchDiscogsSearch()
 	CheckFeaturingName = ini.boolValue("DiscogsAutoTagWeb","CheckFeaturingName")
 	TxtFeaturingName = ini.StringValue("DiscogsAutoTagWeb","TxtFeaturingName")
 	CheckComment = ini.BoolValue("DiscogsAutoTagWeb","CheckComment")
-	CheckUnselectNoTrackPos = ini.BoolValue("DiscogsAutoTagWeb","CheckUnselectNoTrackPos")
+	CheckGroupingIndexTrack = ini.BoolValue("DiscogsAutoTagWeb","CheckGroupingIndexTrack")
 	SubTrackNameSelection = ini.BoolValue("DiscogsAutoTagWeb","SubTrackNameSelection")
 	Separator = ini.StringValue("Appearance","MultiStringSeparator")
 	tmpCountry = ini.StringValue("DiscogsAutoTagWeb","CurrentCountryFilter")
@@ -1401,6 +1414,7 @@ Sub ReloadResults
 	Set Conductors = SDB.NewStringList
 	Set Producers = SDB.NewStringList
 	Set Durations = SDB.NewStringList
+	Set IndexTrack = SDB.NewStringList
 
 	'----------------------------------DiscogsImages----------------------------------------
 	Rem Set SaveImage = SDB.NewStringList
@@ -1707,55 +1721,63 @@ Sub ReloadResults
 			position = exchange_roman_numbers(position)
 
 			' Here comes the new track/disc numbering methods
-			If CheckUnselectNoTrackPos And position = "" Then
+			If position = "" Then
 				UnselectedTracks(iTrackNum) = "x"
+				If CheckGroupingIndexTrack = True Then
+					IndexTrack.Add currentTrack("title")
+				Else
+					IndexTrack.Add ""
+				End If
 			End If
 
 			If position <> "" Then
-				If (cSubTrack <> -1 And InStr(LCase(position), ".") = 0 And CharSeparatorSubTrack = 1) Or (cSubTrack <> -1 And IsNumeric(Right(position, 1)) And CharSeparatorSubTrack = 2) Then
-					If SubTrackNameSelection = False Then
-						Tracks.Item(cSubTrack) = Tracks.Item(cSubTrack) & " (" & subTrackTitle & ")"
-					Else
-						Tracks.Item(cSubTrack) = subTrackTitle
-					End If
-					cSubTrack = -1
-					subTrackTitle = ""
-					CharSeparatorSubTrack = 0
-				End If
-				pos = 0
-				If InStr(LCase(position), "-") > 0 Then
-					pos = InStr(LCase(position), "-")
-				End If
-				'SubTrack Function ---------------------------------------------------------
-				If InStr(LCase(position), ".") > 0 Then
-					CharSeparatorSubTrack = 1
-				End If
-				If Not IsNumeric(Right(position, 1)) And Len(position) > 1 Then
-					CharSeparatorSubTrack = 2
-				End If
-				If CharSeparatorSubTrack <> 0 Then
-					If cSubTrack = -1 Then 'new subtrack
+				IndexTrack.Add ""
+				If CheckTurnOffSubTrack = False Then
+					If (cSubTrack <> -1 And InStr(LCase(position), ".") = 0 And CharSeparatorSubTrack = 1) Or (cSubTrack <> -1 And IsNumeric(Right(position, 1)) And CharSeparatorSubTrack = 2) Then
 						If SubTrackNameSelection = False Then
-							cSubTrack = iTrackNum - 1
+							Tracks.Item(cSubTrack) = Tracks.Item(cSubTrack) & " (" & subTrackTitle & ")"
 						Else
-							cSubTrack = iTrackNum
+							Tracks.Item(cSubTrack) = subTrackTitle
 						End If
+						cSubTrack = -1
+						subTrackTitle = ""
+						CharSeparatorSubTrack = 0
 					End If
-					If subTrackTitle = "" Then
-						subTrackTitle = trackName
-						If SubTrackNameSelection = False Then
-							UnselectedTracks(iTrackNum) = "x"
-						Else
-							UnselectedTracks(iTrackNum) = ""
-						End If
-					Else
-						subTrackTitle = subTrackTitle & ", " & trackName
-						UnselectedTracks(iTrackNum) = "x"
-					End If
-					If UserChoose = True Then
-						Rem UnselectedTracks(iTrackNum) = ""
+					pos = 0
+					If InStr(LCase(position), "-") > 0 Then
+						pos = InStr(LCase(position), "-")
 					End If
 					'SubTrack Function ---------------------------------------------------------
+					If InStr(LCase(position), ".") > 0 Then
+						CharSeparatorSubTrack = 1
+					End If
+					If Not IsNumeric(Right(position, 1)) And Len(position) > 1 Then
+						CharSeparatorSubTrack = 2
+					End If
+					If CharSeparatorSubTrack <> 0 Then
+						If cSubTrack = -1 Then 'new subtrack
+							If SubTrackNameSelection = False Then
+								cSubTrack = iTrackNum - 1
+							Else
+								cSubTrack = iTrackNum
+							End If
+						End If
+						If subTrackTitle = "" Then
+							subTrackTitle = trackName
+							If SubTrackNameSelection = False Then
+								UnselectedTracks(iTrackNum) = "x"
+							Else
+								UnselectedTracks(iTrackNum) = ""
+							End If
+						Else
+							subTrackTitle = subTrackTitle & ", " & trackName
+							UnselectedTracks(iTrackNum) = "x"
+						End If
+						If UserChoose = True Then
+							Rem UnselectedTracks(iTrackNum) = ""
+						End If
+						'SubTrack Function ---------------------------------------------------------
+					End If
 				End If
 				If pos > 0 And CheckNoDisc = False Then ' Disc Number Included
 					If CheckForceNumeric Then
@@ -2292,9 +2314,6 @@ Sub ReloadResults
 		AlbumTitle = currentRelease("title")
 
 		' Get Album art URL
-		AlbumArtThumbnail = CurrentRelease("thumb")
-		AlbumArtThumbnail = Replace(AlbumArtThumbnail, "http://api.discogs.com", "http://s.pixogs.com")
-
 		Dim i, currentImage
 		If CurrentRelease.Exists("images") Then
 			For Each i In CurrentRelease("images")
@@ -2303,6 +2322,8 @@ Sub ReloadResults
 				If currentImage("type") = "primary" Or AlbumArtURL = "" Then
 					AlbumArtURL = currentImage("uri")
 					AlbumArtURL = Replace(AlbumArtURL, "http://api.discogs.com", "http://s.pixogs.com")
+					AlbumArtThumbNail = currentImage("uri150")
+					AlbumArtThumbNail = Replace(AlbumArtThumbnail, "http://api.discogs.com", "http://s.pixogs.com")
 				End If
 			Next
 		End If
@@ -2979,7 +3000,13 @@ Sub FormatSearchResultsViewer(Tracks, TracksNum, TracksCD, Durations, AlbumArtis
 
 	templateHTML = templateHTML &  "<tr><td align=center colspan=2><br></td></tr>"
 	templateHTML = templateHTML &  "<tr><td align=center colspan=2><b>Disc/Track Numbering:</b></td></tr>"
-	templateHTML = templateHTML &  "<tr><td colspan=2 align=left><input type=checkbox id=""UnselectNoTrackPos"" title=""Tracks without track-number at discogs will automatically unselect (Info-Tracks e.g. 'Bonus Tracks')"" >Unselect Track without Track-number</td></tr>"
+
+	'Grouping -+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-++--+-+-+-+-+-+-+-+-+-+-+--+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
+	'templateHTML = templateHTML &  "<tr><td colspan=2 align=left><input type=checkbox id=""UnselectNoTrackPos"" title=""Tracks without track-number at discogs will automatically unselect (Info-Tracks e.g. 'Bonus Tracks')"" >Unselect Track without Track-number</td></tr>"
+	'templateHTML = templateHTML &  "<tr><td colspan=2 align=left><input type=checkbox id=""GroupingIndexTrack"" title=""If option set, content of index track will be written into grouping tag"" >Fill Grouping-Tag with Index-Track</td></tr>"
+	'Grouping -+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-++--+-+-+-+-+-+-+-+-+-+-+--+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-
+	
+	templateHTML = templateHTML &  "<tr><td colspan=2 align=left><input type=checkbox id=""TurnOffSubTrack"" title=""If checked the Sub-Track detection is turned off"" >Turn Sub-Track detection off</td></tr>"
 	templateHTML = templateHTML &  "<tr><td colspan=2 align=left><input type=checkbox id=""SubTrackNameSelection"" title=""If checked the Sub-Track will be named like 'Sub-Track 1, Sub-Track 2, Sub Track 3'  if not checked the Sub-Tracks will be named like 'Track Name (Sub-Track 1, Sub-Track 2, Sub Track 3)'"" >Other Sub-Track Naming</td></tr>"
 
 	templateHTML = templateHTML &  "<tr><td colspan=2 align=left><input type=checkbox id=""forcenumeric"" >Force To Numeric</td></tr>"
@@ -3300,11 +3327,14 @@ Sub FormatSearchResultsViewer(Tracks, TracksNum, TracksCD, Durations, AlbumArtis
 	Set checkBox = templateHTMLDoc.getElementById("various")
 	checkBox.Checked = CheckVarious
 	Script.RegisterEvent checkBox, "onclick", "Update"
-	Set checkBox = templateHTMLDoc.getElementById("UnselectNoTrackPos")
-	checkBox.Checked = CheckUnselectNoTrackPos
-	Script.RegisterEvent checkBox, "onclick", "NoTrackPos"
+	REM Set checkBox = templateHTMLDoc.getElementById("GroupingIndexTrack")
+	REM checkBox.Checked = CheckGroupingIndexTrack
+	REM Script.RegisterEvent checkBox, "onclick", "Update"
 	Set checkBox = templateHTMLDoc.getElementById("SubTrackNameSelection")
 	checkBox.Checked = SubTrackNameSelection
+	Script.RegisterEvent checkBox, "onclick", "Update"
+	Set checkBox = templateHTMLDoc.getElementById("TurnOffSubTrack")
+	checkBox.Checked = CheckTurnOffSubTrack
 	Script.RegisterEvent checkBox, "onclick", "Update"
 
 	Set checkBox = templateHTMLDoc.getElementById("SkipNotChangedReleases")
@@ -3451,6 +3481,10 @@ Sub Update()
 	TxtVarious = text.Value
 	Set checkBox = templateHTMLDoc.getElementById("SubTrackNameSelection")
 	SubTrackNameSelection = checkBox.Checked
+	Set checkBox = templateHTMLDoc.getElementById("TurnOffSubTrack")
+	CheckTurnOffSubTrack = checkBox.Checked
+	REM Set checkBox = templateHTMLDoc.getElementById("GroupingIndexTrack")
+	REM CheckGroupingIndexTrack = checkBox.Checked
 
 	Set checkBox = templateHTMLDoc.getElementById("SkipNotChangedReleases")
 	SkipNotChangedReleases = checkBox.Checked
@@ -3488,23 +3522,6 @@ Sub Update_ProcessNoDiscogs()
 		ProcessOnlyDiscogs = False
 		checkBox.Checked= False
 	End If
-
-End Sub
-
-Sub NoTrackPos()
-
-	Dim checkBox, templateHTMLDoc, i
-	Set WebBrowser = SDB.Objects("WebBrowser")
-	Set templateHTMLDoc = WebBrowser.Interf.Document
-	Set checkBox = templateHTMLDoc.getElementById("UnselectNoTrackPos")
-	CheckUnselectNoTrackPos = checkBox.Checked
-	If Not CheckUnselectNoTrackPos Then
-		For i = 0 To iMaxTracks - 1
-			UnselectedTracks(i) = ""
-		Next
-	End If
-
-	ReloadResults
 
 End Sub
 
@@ -3658,11 +3675,12 @@ Sub SaveOptions()
 		ini.StringValue("DiscogsAutoTagWeb","TxtFeaturingName") = TxtFeaturingName
 		ini.BoolValue("DiscogsAutoTagWeb","CheckFeaturingName") = CheckFeaturingName
 		ini.BoolValue("DiscogsAutoTagWeb","CheckComment") = CheckComment
-		ini.BoolValue("DiscogsAutoTagWeb","CheckUnselectNoTrackPos") = CheckUnselectNoTrackPos
+		ini.BoolValue("DiscogsAutoTagWeb","CheckGroupingIndexTrack") = CheckGroupingIndexTrack
 		ini.BoolValue("DiscogsAutoTagWeb","SubTrackNameSelection") = SubTrackNameSelection
 		ini.BoolValue("DiscogsAutoTagWeb","SkipNotChangedReleases") = SkipNotChangedReleases
 		ini.BoolValue("DiscogsAutoTagWeb","ProcessOnlyDiscogs") = ProcessOnlyDiscogs
 		ini.BoolValue("DiscogsAutoTagWeb","ProcessNoDiscogs") = ProcessNoDiscogs
+		ini.BoolValue("DiscogsAutoTagWeb","CheckTurnOffSubTrack") = CheckTurnOffSubTrack
 
 		tmp = CountryFilterList.Item(0)
 		For a = 1 To CountryList.Count - 1
@@ -4169,41 +4187,6 @@ Function get_release_ID(FirstTrack)
 End Function
 
 
-Sub WriteLog(Text)
-
-	Dim filesys, filetxt, logdatei, tmpText, i
-	'Const ForReading = 1, ForWriting = 2, ForAppending = 8
-	logdatei = SDB.ScriptsPath & "Discogs_Batch_Script.log"
-	Set filesys = CreateObject("Scripting.FileSystemObject")
-	Set filetxt = filesys.OpenTextFile(logdatei, 8, True)
-	If Left(Text, 4) = "Stop" Then
-		cTab = cTab - 1
-	End If
-	tmpText = Time
-	For i = 1 To cTab
-		tmpText = tmpText & Chr(9)
-	Next
-	tmpText = tmpText & SDB.ToAscii(Text)
-	If Left(Text, 5) = "Start" Then
-		cTab = cTab + 1
-	End If
-	filetxt.WriteLine(tmpText)
-	filetxt.Close
-
-End Sub
-
-
-Sub WriteLogInit
-
-	Dim logdatei
-	logdatei = SDB.ScriptsPath & "Discogs_Batch_Script.log"
-	If SDB.Tools.FileSystem.FileExists(logdatei) = True Then
-		SDB.Tools.FileSystem.DeleteFile(logdatei)
-	End If
-
-End Sub
-
-
 Function AddToField(ByRef field, ByVal ftext)
 
 	' for adding data to multi-valued fields
@@ -4597,7 +4580,7 @@ Function searchKeyword(Keywords, Role, AlbumRole, artistName)
 	Dim tmp, x
 	tmp = Split(Keywords, ",")
 	For Each x In tmp
-		If LCase(Role) = LCase(x) Then
+		If Trim(LCase(Role)) = Trim(LCase(x)) Then
 			If InStr(AlbumRole, artistName) = 0 Then
 				If AlbumRole = "" Then
 					AlbumRole = artistName
@@ -6224,5 +6207,40 @@ Sub Install()
 		f.StringValue("DiscogsAutoTagWeb_Batch", "ScriptType") = "0"
 		SDB.RefreshScriptItems
 	End If
+
+End Sub
+
+
+Sub WriteLogInit
+
+	Dim logdatei
+	logdatei = SDB.ScriptsPath & "Discogs_Batch_Script.log"
+	If SDB.Tools.FileSystem.FileExists(logdatei) = True Then
+		SDB.Tools.FileSystem.DeleteFile(logdatei)
+	End If
+
+End Sub
+
+
+Sub WriteLog(Text)
+
+	Dim filesys, filetxt, logdatei, tmpText, i
+	'Const ForReading = 1, ForWriting = 2, ForAppending = 8
+	logdatei = SDB.ScriptsPath & "Discogs_Batch_Script.log"
+	Set filesys = CreateObject("Scripting.FileSystemObject")
+	Set filetxt = filesys.OpenTextFile(logdatei, 8, True)
+	If Left(Text, 4) = "Stop" Then
+		cTab = cTab - 1
+	End If
+	tmpText = Time
+	For i = 1 To cTab
+		tmpText = tmpText & Chr(9)
+	Next
+	tmpText = tmpText & SDB.ToAscii(Text)
+	If Left(Text, 5) = "Start" Then
+		cTab = cTab + 1
+	End If
+	filetxt.WriteLine(tmpText)
+	filetxt.Close
 
 End Sub
