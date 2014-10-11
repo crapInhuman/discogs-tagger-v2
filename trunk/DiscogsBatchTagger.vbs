@@ -2,8 +2,15 @@ Option Explicit
 '
 ' Discogs Batch Tagger Script for MediaMonkey ( crap_inhuman with a little help from my friends Let & eepman )
 '
+Const VersionStr = "v2.22"
 
-Const VersionStr = "v2.21"
+'Changes from 2.22 to 2.23 by crap_inhuman in 10.2014
+'		Added error-check for wrong amount of countríes
+
+
+'Changes from 2.21 to 2.22 by crap_inhuman in 08.2014
+'		Changed OAuth Authorization procedure
+
 
 'Changes from 2.15 to 2.21 by crap_inhuman in 07.2014
 '		Added OAuth authentication
@@ -18,6 +25,7 @@ Const VersionStr = "v2.21"
 '		Bug removed in Keywords routine
 '		Removed bug with & character in searchstring
 '		Small bugfixes
+
 
 'Changes from 2.14 to 2.15 by crap_inhuman in 05.2014
 '		Adjust the script for fetching the small album art
@@ -456,6 +464,15 @@ Sub BatchDiscogsSearch()
 	Separator = ini.StringValue("Appearance","MultiStringSeparator")
 	tmpCountry = ini.StringValue("DiscogsAutoTagWeb","CurrentCountryFilter")
 	tmpCountry2 = Split(tmpCountry, ",")
+	If UBound(tmpCountry2) < 282 Then
+		tmp = "0"
+		For a = 1 To 283
+			tmp = tmp & ",0"
+		Next
+		ini.StringValue("DiscogsAutoTagWeb","CurrentCountryFilter") = tmp
+		tmpCountry2 = Split(tmp, ",")
+		SDB.MessageBox "Country Filter was cleared", mtInformation, Array(mbOk)
+	End If
 	tmpMediaType = ini.StringValue("DiscogsAutoTagWeb","CurrentMediaTypeFilter")
 	tmpMediaType2 = Split(tmpMediaType, ",")
 	tmpMediaFormat = ini.StringValue("DiscogsAutoTagWeb","CurrentMediaFormatFilter")
@@ -955,78 +972,84 @@ Sub BatchDiscogsSearch()
 
 	WriteLog "Start Discogs Request"
 
-	Dim IEobj, objShell, objShellWindows
-	Dim dteWait, objIE, strURL, retIE
+	Dim IEobj, oXMLHTTP, TypeLib, GUID
+	Dim retIE, retryCnt, start
 
 	If AccessToken = "" Or AccessTokenSecret = "" Then
-		MsgBox("Starting August 15th, access to discogs database will require authentication." & vbNewLine & "This is part of an ongoing effort to improve API uptime and response times" & vbNewLine & vbNewLine & "You need an account at discogs in order to use Discogs Tagger.")
+		SDB.MessageBox "Starting August 15th, access to discogs database will require authentication." & vbNewLine & "This is part of an ongoing effort to improve API uptime and response times" & vbNewLine & vbNewLine & "You need an account at discogs in order to use Discogs Tagger.", mtInformation, Array(mbOk)
+
+		Set TypeLib = CreateObject("Scriptlet.TypeLib")
+
 		set IEobj = CreateObject("InternetExplorer.Application")
-		Set objShell = CreateObject("Shell.Application")
-		Set objShellWindows = objShell.Windows
+		
+		GUID = Mid(TypeLib.Guid, 2, 36)
+		WriteLog "GUID=" & GUID
 		IEobj.visible = true
 
-		IEobj.navigate ("http://www.germanc64.de/mm/oauth/login_with_discogs.php")
+		IEobj.navigate ("http://www.germanc64.de/mm/oauth/oauth_guid.php?f=" & GUID)
 
 		WriteLog "IE started"
 
-		dteWait = DateAdd("s", 20, Now())
-
-	Do Until (Now() > dteWait)
+		For a = 1 to 50
+			SDB.Tools.Sleep(100)
 			SDB.ProcessMessages
-		Loop
-		
-		Do
-			If objShellWindows.Count = 0 Then
-				Exit Do
-			End If
-			For i = 0 to objShellWindows.Count - 1
-				Set objIE = objShellWindows.Item(i)
-				strURL = objIE.LocationURL
-				If InStr(strURL, "oauth_verifier") <> 0 Then
-					writeLog strURL
-					retIE = objIE.document.body.innerText
-					WriteLog retIE
+		Next
+		retryCnt = 0
+		Set oXMLHTTP = CreateObject("MSXML2.XMLHTTP.6.0")
+
+		Do While 1=1
+			oXMLHTTP.open "GET", "http://www.germanc64.de/mm/oauth/get_oauth_guid.php?f=" & GUID, false
+			oXMLHTTP.send()
+			If oXMLHTTP.Status = 200 Then
+				retIE = oXMLHTTP.responseText
+						
+			
+				If InStr(retIE, "AccessToken=") <> 0 Then
+					start = InStr(retIE, "AccessToken=")
+					retIE = Mid(retIE, start + 12)
+					AccessToken = Left(retIE, 40)
+					ini.StringValue("DiscogsAutoTagWeb","AccessToken") = AccessToken
+					WriteLog "AccessToken=" & AccessToken
+					start = InStr(retIE, "AccessTokenSecret=")
+					retIE = Mid(retIE, start + 18)
+					AccessTokenSecret = Left(retIE, 40)
+					ini.StringValue("DiscogsAutoTagWeb","AccessTokenSecret") = AccessTokenSecret
+					WriteLog "AccessTokenSecret=" & AccessTokenSecret
+					SDB.MessageBox "The Access Token was stored on your Computer. Now you can use Discogs Tagger till you revoke the permission", mtInformation, Array(mbOk)
 					Exit Do
 				End If
+			End If
+			retryCnt = retryCnt + 1
+			If retryCnt = 45 Then
+				WriteLog "Authorize failed (Err=1)!"
+				SDB.MessageBox "Authorize failed (Err=1)! You have to authorize Discogs Tagger to use it with your Discogs account !" & vbNewLine & "Please restart Discogs Tagger to authorize it !", mtError, Array(mbOk)
+				Set oXMLHTTP = Nothing
+				Set TypeLib = Nothing
+				Call DeleteSet
+				Exit Sub
+			End If
+			For a = 1 to 100
+				SDB.Tools.Sleep(10)
+				SDB.ProcessMessages
 			Next
-		Loop While 1 = 1
-
-		WriteLog "IE finished"
-		
-		Dim start
-		If InStr(retIE, "AccessToken=") <> 0 Then
-			start = InStr(retIE, "AccessToken=")
-			retIE = Mid(retIE, start + 12)
-			start = InStr(retIE, " ")
-			AccessToken = Left(retIE, start -1)
-			ini.StringValue("DiscogsAutoTagWeb","AccessToken") = AccessToken
-			WriteLog "AccessToken=" & AccessToken
-			start = InStr(retIE, "AccessTokenSecret=")
-			retIE = Mid(retIE, start + 18)
-			start = InStr(retIE, " ")
-			AccessTokenSecret = Left(retIE, start -1)
-			ini.StringValue("DiscogsAutoTagWeb","AccessTokenSecret") = AccessTokenSecret
-			WriteLog "AccessTokenSecret=" & AccessTokenSecret
-		End If
-			
-		objIE.visible = False 
-		'IEobj = Nothing
-		objIE.Quit
-		WriteLog "End Discogs Request"
-
+		Loop
+		Set oXMLHTTP = nothing
+		REM Set IEobj = Nothing
+		Set TypeLib = Nothing
 	Else
 		WriteLog "AccessToken found in ini = " & AccessToken
 		WriteLog "AccessTokenSecret found in ini = " & AccessTokenSecret
 	End If
-
+	WriteLog "End Discogs Request"
 
 	Set SongList = SDB.SelectedSongList
 	If SongList.count = 0 Then
 		Set SongList = SDB.AllVisibleSongList
 	End If
 	If SongList.count = 0 Then
-		ErrorMessage = "No Songs selected"
-		FormatErrorMessage ErrorMessage
+		SDB.MessageBox "No Songs selected", mtError, Array(mbOk)
+		Call DeleteSet
+		Exit Sub
 	End If
 
 	Set AlbumIDList = SDB.NewStringList
@@ -1035,6 +1058,7 @@ Sub BatchDiscogsSearch()
 	WriteLog "Songs count=" & SongList.count
 
 	For i = 0 To SongList.Count - 1
+		SDB.ProcessMessages
 		Set itm = SongList.Item(i)
 		WriteLog "Song " & i+1
 		Dim itmAlbum : Set itmAlbum = itm.Album
@@ -1067,10 +1091,8 @@ Sub BatchDiscogsSearch()
 	CurrentSelectedAlbum = 0
 	WriteLog "AlbumIDList.Count (number of different albums)=" & AlbumIDList.Count
 	If AlbumIDList.Count = 0 Then
-		res = SDB.MessageBox("You selected no songs with filled album tag. The script now exit", mtInformation, Array(mbOk))
-		Set ini = Nothing
-		Set ResultsReleaseID = Nothing
-		Script.UnregisterAllEvents
+		res = SDB.MessageBox("You selected no songs with filled album tag. The script now exit", mtWarning, Array(mbOk))
+		Call DeleteSet
 		Exit Sub
 	End If
 
@@ -1180,12 +1202,31 @@ Sub BatchDiscogsSearch()
 	End If
 End Sub
 
+
 Sub Update_SkipNotChangedReleases()
 
 	Set WebBrowser3 = SDB.Objects("WebBrowser3")
 	Set OptionsHTMLDoc = WebBrowser3.Interf.Document
 	Set checkBox = OptionsHTMLDoc.getElementById("SkipNotChangedReleases")
 	SkipNotChangedReleases = checkBox.Checked
+
+End Sub
+
+
+Sub DeleteSet()
+
+	Set ini = Nothing
+	Set MediaTypeList = Nothing
+	Set MediaFormatList = Nothing
+	Set CountryList = Nothing
+	Set YearList = Nothing
+	Set AlternativeList = Nothing
+	Set LoadList = Nothing
+	Set CountryFilterList = Nothing
+	Set MediaTypeFilterList = Nothing
+	Set MediaFormatFilterList = Nothing
+	Set YearFilterList = Nothing
+	Script.UnregisterAllEvents
 
 End Sub
 
@@ -2927,23 +2968,18 @@ Sub FinishSearch(Panel)
 
 	If IsObject(WebBrowser) Then
 		WebBrowser.Common.DestroyControl      ' Destroy the external control
+		Set WebBrowser = Nothing              ' Release global variable
+		SDB.Objects("WebBrowser") = Nothing
 	End If
-	Set WebBrowser = Nothing              ' Release global variable
-	SDB.Objects("WebBrowser") = Nothing
 	If IsObject(WebBrowser2) Then
-		WebBrowser2.Common.DestroyControl      ' Destroy the external control
+		WebBrowser2.Common.DestroyControl
+		Set WebBrowser2 = Nothing
+		If IsObject(SDB.Objects("WebBrowser2")) Then SDB.Objects("WebBrowser2") = Nothing
 	End If
-	Set WebBrowser2 = Nothing              ' Release global variable
-	If IsObject(SDB.Objects("WebBrowser2")) Then SDB.Objects("WebBrowser2") = Nothing
 	SDB.Objects("SearchForm") = Nothing
-
-
-	SDB.Objects("WebBrowser3") = Nothing
-	Dim res, mtInformation
-	res = SDB.MessageBox("You selected " & AlbumIDList.Count & " Albums. " & vbCr & cReleasesUpdate & " Albums were updated." & vbCr &  cReleasesSkip & " Albums were manually skipped." & vbCr & cReleasesAutoSkip & " Albums were auto skipped" & vbCr & cReleasesOnlyDiscogsSkip & " Albums were no Discogs-Releases" & vbCr & cReleasesNoDiscogsSkip & " Albums were Discogs Releases", mtInformation, Array(mbOk))
-	Set ini = Nothing
+	SDB.MessageBox "You selected " & AlbumIDList.Count & " Albums. " & vbNewLine & cReleasesUpdate & " Albums were updated." & vbNewLine &  cReleasesSkip & " Albums were manually skipped." & vbNewLine & cReleasesAutoSkip & " Albums were auto skipped" & vbNewLine & cReleasesOnlyDiscogsSkip & " Albums were no Discogs-Releases" & vbNewLine & cReleasesNoDiscogsSkip & " Albums were Discogs Releases", mtInformation, Array(mbOk)
 	Set ResultsReleaseID = Nothing
-	Script.UnregisterAllEvents
+	Call DeleteSet
 
 End Sub
 
@@ -3900,34 +3936,38 @@ Sub FormatErrorMessage(ErrorMessage)
 	templateHTML = templateHTML &  "</tr>"
 	templateHTML = templateHTML &  GetFooter()
 
-	Set WebBrowser = SDB.Objects("WebBrowser")
-	WebBrowser.SetHTMLDocument templateHTML
-	Set WebBrowser2 = SDB.Objects("WebBrowser2")
-	WebBrowser2.SetHTMLDocument ""
+	If isObject(WebBrowser) = False Then
+		SDB.MessageBox ErrorMessage, mtError, Array(mbOk)
+	Else
+		Set WebBrowser = SDB.Objects("WebBrowser")
+		WebBrowser.SetHTMLDocument templateHTML
+		Set WebBrowser2 = SDB.Objects("WebBrowser2")
+		WebBrowser2.SetHTMLDocument ""
 
-	Set templateHTMLDoc = WebBrowser.Interf.Document
+		Set templateHTMLDoc = WebBrowser.Interf.Document
 
-	Set listBox = templateHTMLDoc.getElementById("alternative")
-	Script.RegisterEvent listBox, "onchange", "Alternative"
+		Set listBox = templateHTMLDoc.getElementById("alternative")
+		Script.RegisterEvent listBox, "onchange", "Alternative"
 
-	Set listBox = templateHTMLDoc.getElementById("filtermediatype")
-	Script.RegisterEvent listBox, "onchange", "Filter"
-	Set listBox = templateHTMLDoc.getElementById("filtermediaformat")
-	Script.RegisterEvent listBox, "onchange", "Filter"
-	Set listBox = templateHTMLDoc.getElementById("filtercountry")
-	Script.RegisterEvent listBox, "onchange", "Filter"
-	Set listBox = templateHTMLDoc.getElementById("filteryear")
-	Script.RegisterEvent listBox, "onchange", "Filter"
-	Set listBox = templateHTMLDoc.getElementById("load")
-	Script.RegisterEvent listBox, "onchange", "Filter"
-	Set submitButton = templateHTMLDoc.getElementById("showcountryfilter")
-	Script.RegisterEvent submitButton, "onclick", "ShowCountryFilter"
-	Set submitButton = templateHTMLDoc.getElementById("showmediatypefilter")
-	Script.RegisterEvent submitButton, "onclick", "ShowMediaTypeFilter"
-	Set submitButton = templateHTMLDoc.getElementById("showmediaformatfilter")
-	Script.RegisterEvent submitButton, "onclick", "ShowMediaFormatFilter"
-	Set submitButton = templateHTMLDoc.getElementById("showyearfilter")
-	Script.RegisterEvent submitButton, "onclick", "ShowYearFilter"
+		Set listBox = templateHTMLDoc.getElementById("filtermediatype")
+		Script.RegisterEvent listBox, "onchange", "Filter"
+		Set listBox = templateHTMLDoc.getElementById("filtermediaformat")
+		Script.RegisterEvent listBox, "onchange", "Filter"
+		Set listBox = templateHTMLDoc.getElementById("filtercountry")
+		Script.RegisterEvent listBox, "onchange", "Filter"
+		Set listBox = templateHTMLDoc.getElementById("filteryear")
+		Script.RegisterEvent listBox, "onchange", "Filter"
+		Set listBox = templateHTMLDoc.getElementById("load")
+		Script.RegisterEvent listBox, "onchange", "Filter"
+		Set submitButton = templateHTMLDoc.getElementById("showcountryfilter")
+		Script.RegisterEvent submitButton, "onclick", "ShowCountryFilter"
+		Set submitButton = templateHTMLDoc.getElementById("showmediatypefilter")
+		Script.RegisterEvent submitButton, "onclick", "ShowMediaTypeFilter"
+		Set submitButton = templateHTMLDoc.getElementById("showmediaformatfilter")
+		Script.RegisterEvent submitButton, "onclick", "ShowMediaFormatFilter"
+		Set submitButton = templateHTMLDoc.getElementById("showyearfilter")
+		Script.RegisterEvent submitButton, "onclick", "ShowYearFilter"
+	End If
 	WriteLog("Stop FormatErrorMessage")
 
 End Sub
@@ -3986,6 +4026,8 @@ Function JSONParser_find_result(searchURL, ArrayName, searchURL_F, searchURL_L)
 				Rtype = ""
 				catNo = ""
 				main_release = ""
+
+				SDB.ProcessMessages
 
 				title = response(ArrayName)(r)("title")
 				Set tmp = response(ArrayName)(r)
@@ -4282,8 +4324,8 @@ Sub NewSearch(CurrentSelectedAlbum)
 
 		Dim FormWidth
 		Dim FormHeight
-		FormWidth = 900
-		FormHeight = 600
+		FormWidth = 1280
+		FormHeight = 1000
 
 		Dim SearchForm : Set SearchForm = UI.NewForm
 		SearchForm.Common.SetRect 0, 0, FormWidth, FormHeight
