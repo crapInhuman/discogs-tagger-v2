@@ -2,7 +2,12 @@ Option Explicit
 '
 ' Discogs Batch Tagger Script for MediaMonkey ( crap_inhuman with a little help from my friends Let & eepman )
 '
-Const VersionStr = "v2.11"
+Const VersionStr = "v2.12"
+
+'Changes from 2.11 to 2.12 by crap_inhuman in 03.2014
+'		Moving the tracks with the Up and Down Button now work
+'		Bug remoeved: Sub-Track do not select(set) the song
+'		Added the option for switching the last artist separator ("&" or "chosen separator")
 
 'Changes from 2.10 to 2.11 by crap_inhuman in 03.2014
 '		Removed bug with more than one artist for a title
@@ -36,10 +41,8 @@ Const VersionStr = "v2.11"
 
 ' ToDo:	Add more tooltips to the html
 '		Trackauswahl im unteren Track-Fenster aktivieren (Zeile 5009)
-'		Tracks verschieben im unteren Track-Fenster (Falls die Reihenfolge falsch ist)
-'		Fehler mit Datum bereinigen (v_year) ???
 '		Falsche Anzahl releasaes prüfen
-' 		other Sub-Track will not select(set) the song
+
 
 ' WebBrowser is visible browser object with display of discogs album info
 Dim WebBrowser, WebBrowser2
@@ -56,7 +59,7 @@ Dim UI, ini
 Dim ResultsReleaseID ' result list
 Dim CurrentReleaseID
 Dim tracklistHTML
-Dim NewTrackPosition
+
 Dim templateHTML
 Dim Combo, Head, btn2, SearchFormWidth
 
@@ -73,7 +76,8 @@ Dim CheckUnselectNoTrackPos, CheckStyleField, CheckNotAlwaysSaveImage
 Dim SubTrackNameSelection
 Dim CountryFilterList, MediaTypeFilterList, MediaFormatFilterList, YearFilterList
 Dim LyricistKeywords, ConductorKeywords, ProducerKeywords, ComposerKeywords, FeaturingKeywords
-Dim ArtistSeparator
+Dim ArtistSeparator, ArtistLastSeparator
+Dim RadioBoxCheck
 
 Dim SavedReleaseId
 Dim SavedSearchTerm
@@ -330,6 +334,10 @@ Sub BatchDiscogsSearch()
 			ini.StringValue("DiscogsAutoTagWeb","ArtistSeparator") = ", "
 		End If
 
+		If ini.StringValue("DiscogsAutoTagWeb","ArtistLastSeparator") = "" Then
+			ini.BoolValue("DiscogsAutoTagWeb","ArtistLastSeparator") = True
+		End If
+
 		If ini.StringValue("DiscogsAutoTagWeb","SkipNotChangedReleases") = "" Then
 			ini.BoolValue("DiscogsAutoTagWeb","SkipNotChangedReleases") = True
 		End If
@@ -417,6 +425,7 @@ Sub BatchDiscogsSearch()
 	CheckNotAlwaysSaveImage = ini.BoolValue("DiscogsAutoTagWeb","CheckNotAlwaysSaveImage")
 	CheckStyleField = ini.StringValue("DiscogsAutoTagWeb","CheckStyleField")
 	ArtistSeparator = ini.StringValue("DiscogsAutoTagWeb","ArtistSeparator")
+	ArtistLastSeparator = ini.BoolValue("DiscogsAutoTagWeb","ArtistLastSeparator")
 	SkipNotChangedReleases = ini.BoolValue("DiscogsAutoTagWeb","SkipNotChangedReleases")
 	ProcessNoDiscogs = ini.BoolValue("DiscogsAutoTagWeb","ProcessNoDiscogs")
 	ProcessOnlyDiscogs = ini.BoolValue("DiscogsAutoTagWeb","ProcessOnlyDiscogs")
@@ -1043,7 +1052,9 @@ Sub BatchDiscogsSearch()
 			ProcessNoDiscogs = checkBox.checked
 			ini.BoolValue("DiscogsAutoTagWeb","ProcessNoDiscogs") = ProcessNoDiscogs
 		End If
-		
+
+		RadioBoxCheck = -1
+
 		SDB.ProcessMessages
 
 		NewSearch CurrentSelectedAlbum
@@ -1074,8 +1085,6 @@ Sub FindResults(SearchTerm, SearchArtist, SearchAlbum)
 	Script.RegisterEvent Combo, "OnSelect", "ComboChange"
 	Set ResultsReleaseID = SDB.NewStringList
 	ErrorMessage = ""
-
-	Dim SearchString
 
 	If (InStr(SearchTerm," - [search by release id]") > 0) Then
 		SearchTerm = Left(SearchTerm,InStrRev(SearchTerm," - [search by release id]")-1)
@@ -1135,18 +1144,23 @@ Sub FindResults(SearchTerm, SearchArtist, SearchAlbum)
 			Combo.AddItem FirstTrack.Artist.Name & " - " & FirstTrack.Album.Name & " - [currently tagged with this release]"
 			ResultsReleaseID.Add get_release_ID(FirstTrack)
 		End If
-		
-		SearchString = SearchTerm
-		
-		WriteLog "FindResults searchString=" & SearchString
-		WriteLog "FindResults searchArtist=" & SearchArtist
-		WriteLog "FindResults searchAlbum=" & SearchAlbum
-		
+
+		CurrentLoadType = "Search Results"
+
+		WriteLog "FindResults SearchTerm=" & SearchTerm
+		WriteLog "FindResults SearchArtist=" & SearchArtist
+		WriteLog "FindResults SearchAlbum=" & SearchAlbum
+
 		If SearchArtist <> "" And SearchAlbum <> "" Then
-			searchURL = "http://api.discogs.com/database/search?type=release&title=" & URLEncodeUTF8(CleanSearchString(SearchAlbum)) & "&artist=" & URLEncodeUTF8(CleanSearchString(SearchArtist)) & "&per_page=100"
+			searchURL = "http://api.discogs.com/database/search?q=" & URLEncodeUTF8(CleanSearchString(SearchTerm)) & "&type=release&per_page=100"
+		ElseIf SearchArtist = "" And SearchAlbum <> "" Then
+			searchURL = "http://api.discogs.com/database/search?type=release&title=" & URLEncodeUTF8(CleanSearchString(SearchAlbum)) & "&per_page=100"
+		ElseIf SearchArtist <> "" And SearchAlbum = "" Then
+			searchURL = "http://api.discogs.com/database/search?type=release&artist=" & URLEncodeUTF8(CleanSearchString(SearchArtist)) & "&per_page=100"
 		Else
-			searchURL = "http://api.discogs.com/database/search?q=" & URLEncodeUTF8(CleanSearchString(SearchString)) & "&type=release&per_page=100"
+			searchURL = "http://api.discogs.com/database/search?q=" & URLEncodeUTF8(CleanSearchString(SearchTerm)) & "&type=release&per_page=100"
 		End If
+
 		JSONParser_find_result searchURL, "results"
 		
 		WriteLog "JSON-Parser done"
@@ -1239,7 +1253,7 @@ Sub LoadMasterResults(MasterId)
 	
 	Set Combo = Nothing
 	Set Combo = UI.NewDropDown(Head)
-	Combo.Common.SetRect 5, 5, 650, 25
+	Combo.Common.SetRect 5, 5, SearchFormWidth -550, 20
 	Combo.Common.Anchors = 6
 	Combo.Style = 2     ' List
 	Script.RegisterEvent Combo, "OnSelect", "ComboChange"
@@ -1279,7 +1293,7 @@ Sub LoadArtistResults(ArtistId)
 	
 	Set Combo = Nothing
 	Set Combo = UI.NewDropDown(Head)
-	Combo.Common.SetRect 5, 5, 650, 25
+	Combo.Common.SetRect 5, 5, SearchFormWidth -550, 20
 	Combo.Common.Anchors = 6
 	Combo.Style = 2     ' List
 	Script.RegisterEvent Combo, "OnSelect", "ComboChange"
@@ -1296,7 +1310,7 @@ Sub LoadArtistResults(ArtistId)
 			ResultsReleaseID.Add get_release_ID(FirstTrack)
 		End If
 		
-		artistURL = "http://api.discogs.com/artists/" & ArtistId & "/releases"
+		artistURL = "http://api.discogs.com/artists/" & ArtistId & "/releases&per_page=100"
 		WriteLog "ArtistSuchURL=" & artistURL
 		JSONParser_find_result artistURL, "releases"
 	End If
@@ -1320,7 +1334,7 @@ Sub LoadLabelResults(LabelId)
 	
 	Set Combo = Nothing
 	Set Combo = UI.NewDropDown(Head)
-	Combo.Common.SetRect 5, 5, 650, 25
+	Combo.Common.SetRect 5, 5, SearchFormWidth -550, 20
 	Combo.Common.Anchors = 6
 	Combo.Style = 2     ' List
 	Script.RegisterEvent Combo, "OnSelect", "ComboChange"
@@ -1337,7 +1351,7 @@ Sub LoadLabelResults(LabelId)
 			ResultsReleaseID.Add get_release_ID(FirstTrack)
 		End If
 		
-		labelURL = "http://api.discogs.com/labels/" & LabelId & "/releases"
+		labelURL = "http://api.discogs.com/labels/" & LabelId & "/releases&per_page=100"
 		WriteLog "labelURL=" & labelURL
 		JSONParser_find_result labelURL, "releases"
 	End If
@@ -1694,11 +1708,13 @@ Sub ReloadResults
 					End If
 					If subTrackTitle = "" Then
 						subTrackTitle = trackName
+						UnselectedTracks(iTrackNum) = ""
 					Else
 						subTrackTitle = subTrackTitle & ", " & trackName
-					End If
-					If UserChoose = False Then
 						UnselectedTracks(iTrackNum) = "x"
+					End If
+					If UserChoose = True Then
+						UnselectedTracks(iTrackNum) = ""
 					End If
 					'SubTrack Function ---------------------------------------------------------
 				End If
@@ -2051,10 +2067,10 @@ Sub ReloadResults
 						Else
 							TrackFeaturing = TrackFeaturing & ", " & tmpTrackArtist
 						End If
+
 					End If
 					'TitleFeaturing
 					If currentArtist("join") <> "" Then
-					'And currentArtist("join") <> "," Then
 						If LookForFeaturing(currentArtist("join")) Then
 							FoundFeaturing = True
 							tmpJoin = currentArtist("join")
@@ -2062,9 +2078,6 @@ Sub ReloadResults
 							artistList = artistList & " " & currentArtist("join") & " "
 							FoundFeaturing = False
 						End If
-					'ElseIf currentArtist("join") = "," Then
-					'	artistList = artistList & ArtistSeparator
-					'	FoundFeaturing = false
 					End If
 				Next
 			End If
@@ -2424,6 +2437,13 @@ Sub ReloadResults
 	Else
 		WebBrowser2.SetHTMLDocument ""
 		WebBrowser2.SetHTMLDocument tracklistHTML
+		WriteLog ("RadioBoxCheck=" & RadioBoxCheck)
+		If RadioBoxCheck > -1 Then
+			Dim RadioBox, templateHTMLDoc
+			Set templateHTMLDoc = WebBrowser2.Interf.Document
+			Set RadioBox = templateHTMLDoc.getElementById(RadioBoxCheck)
+			RadioBox.Checked = True
+		End If
 		WriteLog "Stop ReloadResults"
 	End If
 	
@@ -2642,10 +2662,14 @@ Sub FinishSearch(Panel)
 	
 	WriteLog "FinishSearch"
 
-	WebBrowser.Common.DestroyControl      ' Destroy the external control
+	If IsObject(WebBrowser) Then
+		WebBrowser.Common.DestroyControl      ' Destroy the external control
+	End If
 	Set WebBrowser = Nothing              ' Release global variable
 	SDB.Objects("WebBrowser") = Nothing
-	WebBrowser2.Common.DestroyControl      ' Destroy the external control
+	If IsObject(WebBrowser2) Then
+		WebBrowser2.Common.DestroyControl      ' Destroy the external control
+	End If
 	Set WebBrowser2 = Nothing              ' Release global variable
 	If IsObject(SDB.Objects("WebBrowser2")) Then SDB.Objects("WebBrowser2") = Nothing
 	SDB.Objects("SearchForm") = Nothing
@@ -4525,7 +4549,6 @@ Sub NewSearch(CurrentSelectedAlbum)
 
 	Set NewTrackList = SDB.NewSongList
 	Set AlternativeList = SDB.NewStringList
-	Set NewTrackPosition = SDB.NewStringList
 
 	For i = 0 To 1000
 		UnselectedTracks(i) = ""
@@ -4538,7 +4561,7 @@ Sub NewSearch(CurrentSelectedAlbum)
 	SavedSearchTerm = ""
 	SavedArtistId = ""
 	SavedLabelId = ""
-	
+
 	FirstTrack = ""
 	AlbumArtURL = ""
 	AlbumArtThumbNail = ""
@@ -4550,10 +4573,12 @@ Sub NewSearch(CurrentSelectedAlbum)
 	ResultsReleaseID = ""
 	CurrentReleaseID = ""
 	QueryString = ""
-	
+
 	OriginalDate = ""
 	ReleaseDate = ""
-	
+
+	RadioBoxCheck = -1
+
 	WriteLog("AlbumIDList.Count=" & AlbumIDList.Count)
 	WriteLog("CurrentSelectedAlbum=" & CurrentSelectedAlbum)
 	If AlbumIDList.Count > CurrentSelectedAlbum Then
@@ -4569,9 +4594,8 @@ Sub NewSearch(CurrentSelectedAlbum)
 		Loop
 		Set iter=Nothing
 		
-		For i = 1 To NewTrackList.Count
-			NewTrackPosition.Add(i)
-			Set currentTrack = NewTrackList.Item(i-1)
+		For i = 0 To NewTrackList.Count-1
+			Set currentTrack = NewTrackList.Item(i)
 			WriteLog("Song " & i & "  /  Artist=" & currentTrack.ArtistName & "  /  Title=" & currentTrack.Title & "  /  Album=" & currentTrack.AlbumName)
 		Next
 		
@@ -4754,54 +4778,60 @@ Sub NewSearch(CurrentSelectedAlbum)
 		End If
 	End If
 	WriteLog "Stop NewSearch"
-	Rem Do While 1=1
-		Rem For i = 1 To 1000 
-		Rem Next
-		Rem SDB.ProcessMessages
-		Rem Btn11Click
-	Rem Loop
-	
+
 End Sub
 
 
 Sub TrackPosUp(SongNr)
 
-	Dim tmpTrackPos, g
-	If SongNr = 1 Then Exit Sub
-	tmpTrackPos = NewTrackPosition.Item(SongNr-1) - 1
-	For g = 0 To NewTrackPosition.Count - 1
-		If Int(NewTrackPosition.Item(g)) = Int(tmpTrackPos) Then
-			NewTrackPosition.Item(g) = NewTrackPosition.Item(g) + 1
-			Exit For
-		End If
+	Dim g, tmpTrackList
+	Dim templateHTMLDoc
+	If SongNr = 0 Then Exit Sub
+	Set tmpTrackList = SDB.NewSongList
+	If SongNr = 1 Then
+		tmpTrackList.add NewTrackList.Item(1)
+		tmpTrackList.add NewTrackList.Item(0)
+	End If
+	If SongNr > 1 Then
+		For g = 0 to SongNr-2
+			tmpTrackList.add NewTrackList.Item(g)
+		Next
+		tmpTrackList.add NewTrackList.Item(SongNr)
+		tmpTrackList.add NewTrackList.Item(SongNr-1)
+	End If
+	For g = SongNr+1 to NewTrackList.Count-1
+		tmpTrackList.add NewTrackList.Item(g)
 	Next
-	NewTrackPosition.Item(SongNr-1) = NewTrackPosition.Item(SongNr-1) - 1
-	
+	Set NewTrackList = SDB.NewSongList
+	For g = 0 to tmpTrackList.Count-1
+		NewTrackList.add tmpTrackList.Item(g)
+	Next
+	RadioBoxCheck = SongNr - 1
+
 End Sub
 
 
 Sub TrackPosDown(SongNr)
 	
-	Dim tmpTrackPos, g
-	WriteLog "SongNr=" & SongNr
-	If SongNr = NewTrackPosition.Count Then Exit Sub
-	tmpTrackPos = NewTrackPosition.Item(SongNr-2)
-	'WriteLog "old SongNrPos=" & NewTrackPosition.Item(SongNr-2)
-	'WriteLog "tmpTrackPos=" & tmpTrackPos
-	For g = 0 To NewTrackPosition.Count - 1
-		If Int(NewTrackPosition.Item(g)) = Int(tmpTrackPos)+1 Then
-			'WriteLog "g=" & g
-			'WriteLog "song g old=" & NewTrackPosition.Item(g)
-			NewTrackPosition.Item(g) = NewTrackPosition.Item(g) - 1
-			WriteLog "song g new=" & NewTrackPosition.Item(g)
-			Exit For
-		End If
+	Dim g, tmpTrackList
+	If SongNr = NewTrackList.count-1 Then Exit Sub
+	Set tmpTrackList = SDB.NewSongList
+	For g = 0 to SongNr-1
+		tmpTrackList.add NewTrackList.Item(g)
 	Next
-	WriteLog "SongNr=" & SongNr
-	WriteLog "old SongNrPos=" & NewTrackPosition.Item(SongNr-1)
-	NewTrackPosition.Item(SongNr-1) = NewTrackPosition.Item(SongNr-1) + 1
-	WriteLog "new SongNrPos=" & NewTrackPosition.Item(SongNr-1)
-	
+	tmpTrackList.add NewTrackList.Item(SongNr+1)
+	tmpTrackList.add NewTrackList.Item(SongNr)
+	If SongNr+2 < NewTrackList.count-1 Then
+		For g = SongNr+2 to NewTrackList.Count-1
+			tmpTrackList.add NewTrackList.Item(g)
+		Next
+	End If
+	Set NewTrackList = SDB.NewSongList
+	For g = 0 to tmpTrackList.Count-1
+		NewTrackList.add tmpTrackList.Item(g)
+	Next
+	RadioBoxCheck = SongNr + 1
+
 End Sub
 
 
@@ -4811,6 +4841,7 @@ Sub ComboChange(Combo)
 	Dim Index
 	Index = Combo.ItemIndex
 	WriteLog "ComboChange Index=" & Index
+	RadioBoxCheck = -1
 	ShowResult Index
 	WriteLog "Stop ComboChange"
 	
@@ -4889,7 +4920,7 @@ Sub Btn10Click
 	Dim templateHTMLDoc
 	Set WebBrowser2 = SDB.Objects("WebBrowser2")
 	Set templateHTMLDoc = WebBrowser2.Interf.Document
-	For g = 1 To NewTrackPosition.Count
+	For g = 0 To NewTrackList.Count-1
 		Set RadioBox = templateHTMLDoc.getElementById(g)
 		If RadioBox.checked Then
 			TrackPosUp g
@@ -4907,7 +4938,7 @@ Sub Btn11Click
 	Dim templateHTMLDoc
 	Set WebBrowser2 = SDB.Objects("WebBrowser2")
 	Set templateHTMLDoc = WebBrowser2.Interf.Document
-	For g = 1 To NewTrackPosition.Count
+	For g = 0 To NewTrackList.Count-1
 		Set RadioBox = templateHTMLDoc.getElementById(g)
 		If RadioBox.checked Then
 			TrackPosDown g
@@ -5111,7 +5142,7 @@ Function trackliste_aufbauen (Tracks, TracksNum, TracksCD, Durations, AlbumArtis
 	tracklistHTML = tracklistHTML & "</style>"
 	tracklistHTML = tracklistHTML & "</HEAD>"
 	tracklistHTML = tracklistHTML & "<body bgcolor=""#FFFFFF"">"
-	tracklistHTML = tracklistHTML & "<table border=0 cellspacing=2 cellpadding=5 class=tabletext>"
+	tracklistHTML = tracklistHTML & "<table border=1 cellspacing=2 cellpadding=5 class=tabletext>"
 	tracklistHTML = tracklistHTML & "<tr>"
 	
 	'table head
@@ -5146,10 +5177,9 @@ Function trackliste_aufbauen (Tracks, TracksNum, TracksCD, Durations, AlbumArtis
 	'First Line Table (Original Track tags)
 	For c = 0 To NewTrackList.Count - 1
 		
-		Set itm2 = NewTrackList.Item(NewTrackPosition.Item(c)-1)
-		writelog "newtrackpos=" & NewTrackPosition.Item(c)
+		Set itm2 = NewTrackList.Item(c)
 		tracklistHTML = tracklistHTML & "<tr bgcolor=""#CCCCCC"">"
-		tracklistHTML = tracklistHTML & "<td nowrap align=right><input type=""radio"" id=""" & c+1 & """ name=""trackauswahl""></td><td align=left><b>" & c+1 & "</b></td>"
+		tracklistHTML = tracklistHTML & "<td nowrap align=right><input type=""radio"" id=""" & c & """ name=""trackauswahl""></td><td align=left><b>" & c+1 & "</b></td>"
 		
 		tracklistHTML = tracklistHTML & "<td align=middle nowrap>" & itm2.TrackOrderStr & "</td>"
 		tracklistHTML = tracklistHTML & "<td align=middle nowrap>" & itm2.DiscNumberStr & "</td>"
@@ -6080,9 +6110,9 @@ Function GetFilterHTML(Width, Row, CountColumn)
 	For i = 0 To Row
 		filterHTML = filterHTML &  "<tr>"
 		For a = 1 To CountColumn
+			If FilterList.Count = a + (i * CountColumn) Then Exit For
 			filterHTML = filterHTML &  "<td><input type=checkbox id=""Filter" & a + (i * CountColumn) & """ >" & FilterList.Item(a + (i * CountColumn))
 			filterHTML = filterHTML &  "</td>"
-			If FilterList.Count = a + (i * CountColumn) Then Exit For
 		Next
 		filterHTML = filterHTML &  "</tr>"
 	Next
