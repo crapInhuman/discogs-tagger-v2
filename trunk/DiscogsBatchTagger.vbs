@@ -2,11 +2,17 @@ Option Explicit
 '
 ' Discogs Batch Tagger Script for MediaMonkey ( crap_inhuman with a little help from my friends Let & eepman )
 '
-Const VersionStr = "v2.12"
+
+Const VersionStr = "v2.13"
+
+'Changes from 2.12 to 2.13 by crap_inhuman in 04.2014
+'		Bug removed: Filter doesn't work correctly
+'		There's no max count for release results
+'		Bug removed: Artist releases and Label releases work again
 
 'Changes from 2.11 to 2.12 by crap_inhuman in 03.2014
 '		Moving the tracks with the Up and Down Button now work
-'		Bug remoeved: Sub-Track do not select(set) the song
+'		Bug removed: Sub-Track do not select(set) the song
 '		Added the option for switching the last artist separator ("&" or "chosen separator")
 
 'Changes from 2.10 to 2.11 by crap_inhuman in 03.2014
@@ -40,8 +46,8 @@ Const VersionStr = "v2.12"
 
 
 ' ToDo:	Add more tooltips to the html
-'		Trackauswahl im unteren Track-Fenster aktivieren (Zeile 5009)
-'		Falsche Anzahl releasaes prüfen
+'		Check the wrong count of releases
+'		Add option to limit release result for faster results
 
 
 ' WebBrowser is visible browser object with display of discogs album info
@@ -116,11 +122,11 @@ Rem Dim WebBrowser3
 Rem Dim SelectedSongsGlobal
 '----------------------------------DiscogsImages----------------------------------------
 
-Rem Dim SDB : Set SDB = CreateObject("SongsDB.SDBApplication")
-Rem SDB.ShutdownAfterDisconnect = False
-Rem Dim Script : Set Script = CreateObject("SongsDB.SDBScriptControl")
+'Dim SDB : Set SDB = CreateObject("SongsDB.SDBApplication")
+'SDB.ShutdownAfterDisconnect = False
+'Dim Script : Set Script = CreateObject("SongsDB.SDBScriptControl")
 Set UI = SDB.UI
-Rem Call BatchDiscogsSearch
+'Call BatchDiscogsSearch
 
 ' MediaMonkey calls this method whenever a search is started using this script
 Sub BatchDiscogsSearch()
@@ -1164,7 +1170,7 @@ Sub FindResults(SearchTerm, SearchArtist, SearchAlbum)
 		JSONParser_find_result searchURL, "results"
 		
 		WriteLog "JSON-Parser done"
-		
+		Dim a
 		If ResultsReleaseID.Count = 0 Then
 			FilterFound = False
 			If FilterCountry = "Use Country Filter" Then
@@ -1310,7 +1316,7 @@ Sub LoadArtistResults(ArtistId)
 			ResultsReleaseID.Add get_release_ID(FirstTrack)
 		End If
 		
-		artistURL = "http://api.discogs.com/artists/" & ArtistId & "/releases&per_page=100"
+		artistURL = "http://api.discogs.com/artists/" & ArtistId & "/releases?per_page=100"
 		WriteLog "ArtistSuchURL=" & artistURL
 		JSONParser_find_result artistURL, "releases"
 	End If
@@ -1351,7 +1357,7 @@ Sub LoadLabelResults(LabelId)
 			ResultsReleaseID.Add get_release_ID(FirstTrack)
 		End If
 		
-		labelURL = "http://api.discogs.com/labels/" & LabelId & "/releases&per_page=100"
+		labelURL = "http://api.discogs.com/labels/" & LabelId & "/releases?per_page=100"
 		WriteLog "labelURL=" & labelURL
 		JSONParser_find_result labelURL, "releases"
 	End If
@@ -1708,13 +1714,17 @@ Sub ReloadResults
 					End If
 					If subTrackTitle = "" Then
 						subTrackTitle = trackName
-						UnselectedTracks(iTrackNum) = ""
+						If SubTrackNameSelection = False Then
+							UnselectedTracks(iTrackNum) = "x"
+						Else
+							UnselectedTracks(iTrackNum) = ""
+						End If
 					Else
 						subTrackTitle = subTrackTitle & ", " & trackName
 						UnselectedTracks(iTrackNum) = "x"
 					End If
 					If UserChoose = True Then
-						UnselectedTracks(iTrackNum) = ""
+						Rem UnselectedTracks(iTrackNum) = ""
 					End If
 					'SubTrack Function ---------------------------------------------------------
 				End If
@@ -1729,7 +1739,7 @@ Sub ReloadResults
 								End If
 							End If
 						End If
-						If Left(position,2) <> "CD" And iAutoDiscNumber <> Left(position,pos-1) Then
+						If Left(position,2) <> "CD" And Int(iAutoDiscNumber) <> Int(Left(position,pos-1)) Then
 							iAutoTrackNumber = 1
 						End If
 						If UnselectedTracks(iTrackNum) <> "x" Then
@@ -2619,10 +2629,12 @@ Sub ShowResult(ResultID)
 	WriteLog "Start ShowResult"
 	Dim searchURL, ReleaseID
 	If ResultsReleaseID.Count = 0 Then
-		Rem FormatErrorMessage "Cannot load artist - "
+		FormatErrorMessage Errormessage
 		WriteLog "Stop ShowResult"
 		Exit Sub
 	End If
+	Set WebBrowser = SDB.Objects("WebBrowser")
+	Set WebBrowser2 = SDB.Objects("WebBrowser2")
 	WebBrowser.SetHTMLDocument ""                 ' Deletes visible search result
 	WebBrowser2.SetHTMLDocument ""
 	
@@ -3522,13 +3534,14 @@ Sub Filter()
 		WriteLog "SavedSearchTerm=" & SavedSearchTerm
 		FindResults SavedSearchTerm, "", ""
 	End If
+	ShowResult 0
 	WriteLog "Stop Filter"
-	
+
 End Sub
 
 
 Sub Alternative()
-	
+
 	WriteLog("Start Alternative")
 	Dim templateHTMLDoc
 	Set WebBrowser = SDB.Objects("WebBrowser")
@@ -3536,9 +3549,9 @@ Sub Alternative()
 	SavedSearchTerm =  templateHTMLDoc.getElementById("alternative").Value
 	CurrentLoadType = "Search Results"
 	FindResults SavedSearchTerm, "", ""
-	REM ReloadResults
+	ShowResult 0
 	WriteLog("Stop Alternative")
-	
+
 End Sub
 
 
@@ -3871,7 +3884,7 @@ Function JSONParser_find_result(searchURL, ArrayName)
 	Set json = New VbsJson
 	
 	Dim response
-	Dim format, title, country, v_year, label, artist, Rtype, catNo, main_release, tmp, ReleaseDesc, FilterFound, SongCount, SongCountMax
+	Dim format, title, country, v_year, label, artist, Rtype, catNo, main_release, tmp, ReleaseDesc, FilterFound, SongCount, SongCountMax, SongPages, Page
 	
 	WriteLog "SearchURL=" & SearchURL
 	Call oXMLHTTP.open("GET", searchURL, False)
@@ -3888,117 +3901,128 @@ Function JSONParser_find_result(searchURL, ArrayName)
 		SongCount = 1
 		SongCountMax = response("pagination")("items")
 		WriteLog ("SongCountMax=" & SongCountMax)
-		
-		For Each r In response(ArrayName)
-			format = ""
-			title = ""
-			country = ""
-			v_year = ""
-			artist = ""
-			label = ""
-			Rtype = ""
-			catNo = ""
-			main_release = ""
-			
-			title = response(ArrayName)(r)("title")
-			Set tmp = response(ArrayName)(r)
-			If tmp.Exists("artist") Then
-				artist = tmp("artist")
+		SongPages = response("pagination")("pages")
+		WriteLog ("SongPages=" & SongPages)
+		For Page = 1 to SongPages
+			If Page <> 1 Then
+				Call oXMLHTTP.open("GET", searchURL & "&page=" & Page, False)
+				WriteLog "SearchURL=" & SearchURL & "&page=" & Page
+				Call oXMLHTTP.setRequestHeader("Content-Type","application/json")
+				Call oXMLHTTP.setRequestHeader("User-Agent","MediaMonkeyDiscogsAutoTagBatch/2.0 +http://mediamonkey.com")
+				Call oXMLHTTP.send()
+				Set response = json.Decode(oXMLHTTP.responseText)
 			End If
-			If tmp.Exists("main_release") Then
-				main_release = tmp("main_release")
-			End If
-			If ArrayName = "results" Then
-				For Each f In response(ArrayName)(r)("format")
-					format = format & response(ArrayName)(r)("format")(f) & ", "
-				Next
-				If Len(format) <> 0 Then format = Left(format, Len(format)-2)
-			Else
-				format = response(ArrayName)(r)("format")
-			End If
-			
-			country = response(ArrayName)(r)("country")
-			If ArrayName = "versions" Then
-				If tmp.Exists("released") Then
-					v_year = response(ArrayName)(r)("released")
+			For Each r In response(ArrayName)
+				format = ""
+				title = ""
+				country = ""
+				v_year = ""
+				artist = ""
+				label = ""
+				Rtype = ""
+				catNo = ""
+				main_release = ""
+				
+				title = response(ArrayName)(r)("title")
+				Set tmp = response(ArrayName)(r)
+				If tmp.Exists("artist") Then
+					artist = tmp("artist")
 				End If
-			Else
-				If tmp.Exists("year") Then
-					v_year = response(ArrayName)(r)("year")
+				If tmp.Exists("main_release") Then
+					main_release = tmp("main_release")
 				End If
-			End If
-			If tmp.Exists("catno") Then
-				catNo = response(ArrayName)(r)("catno")
-			End If
-			If tmp.Exists("type") Then
-				Rtype = response(ArrayName)(r)("type")
-			End If
-			If ArrayName = "results" Then
-				For Each f In response(ArrayName)(r)("label")
-					If label <> "" Then
-						If Left(label, Len(label)-2) <> response(ArrayName)(r)("label")(f) Then
-							label = label & response(ArrayName)(r)("label")(f) & ", "
-						End If
-					Else
-						label = response(ArrayName)(r)("label")(f) & ", "
+				If ArrayName = "results" Then
+					For Each f In response(ArrayName)(r)("format")
+						format = format & response(ArrayName)(r)("format")(f) & ", "
+					Next
+					If Len(format) <> 0 Then format = Left(format, Len(format)-2)
+				Else
+					format = response(ArrayName)(r)("format")
+				End If
+				
+				country = response(ArrayName)(r)("country")
+				If ArrayName = "versions" Then
+					If tmp.Exists("released") Then
+						v_year = response(ArrayName)(r)("released")
 					End If
-				Next
-				If Len(label) <> 0 Then label = Left(label, Len(label)-2)
-			Else
-				label = response(ArrayName)(r)("label")
-			End If
-			ReleaseDesc = ""
-			Do
-				If FilterMediaType = "Use MediaType Filter" And Format <> "" Then
-					FilterFound = False
-					For a = 1 To MediaTypeList.Count - 1
-						If InStr(Format, MediaTypeList.Item(a)) <> 0 And MediaTypeFilterList.Item(a) = "1" Then FilterFound = True
-					Next
-					If FilterFound = False Then Exit Do
+				Else
+					If tmp.Exists("year") Then
+						v_year = response(ArrayName)(r)("year")
+					End If
 				End If
-				If(FilterMediaType <> "None" And FilterMediaType <> "Use MediaType Filter" And InStr(format, FilterMediaType) = 0 And format <> "") Then Exit Do
-				
-				If FilterMediaFormat = "Use MediaFormat Filter" And format <> "" Then
-					FilterFound = False
-					For a = 1 To MediaFormatList.Count - 1
-						If InStr(format, MediaFormatList.Item(a)) <> 0 And MediaFormatFilterList.Item(a) = "1" Then FilterFound = True
-					Next
-					If FilterFound = False Then Exit Do
+				If tmp.Exists("catno") Then
+					catNo = response(ArrayName)(r)("catno")
 				End If
-				If(FilterMediaFormat <> "None" And FilterMediaFormat <> "Use MediaFormat Filter" And InStr(format, FilterMediaFormat) = 0 And Format <> "") Then Exit Do
-				
-				If FilterCountry = "Use Country Filter" And country <> "" Then
-					FilterFound = False
-					For a = 1 To CountryList.Count - 1
-						If InStr(country, CountryList.Item(a)) <> 0 And CountryFilterList.Item(a) = "1" Then FilterFound = True
-					Next
-					If FilterFound = False Then Exit Do
+				If tmp.Exists("type") Then
+					Rtype = response(ArrayName)(r)("type")
 				End If
-				If(FilterCountry <> "None" And FilterCountry <> "Use Country Filter" And InStr(country, FilterCountry) = 0 And country <> "") Then Exit Do
-				
-				If FilterYear = "Use Year Filter" And v_year <> "" Then
-					FilterFound = False
-					For a = 1 To YearList.Count - 1
-						If InStr(v_year, YearList.Item(a)) <> 0 And YearFilterList.Item(a) = "1" Then FilterFound = True
+				If ArrayName = "results" Then
+					For Each f In response(ArrayName)(r)("label")
+						If label <> "" Then
+							If Left(label, Len(label)-2) <> response(ArrayName)(r)("label")(f) Then
+								label = label & response(ArrayName)(r)("label")(f) & ", "
+							End If
+						Else
+							label = response(ArrayName)(r)("label")(f) & ", "
+						End If
 					Next
-					If FilterFound = False Then Exit Do
+					If Len(label) <> 0 Then label = Left(label, Len(label)-2)
+				Else
+					label = response(ArrayName)(r)("label")
 				End If
-				If(FilterYear <> "None" And FilterYear <> "Use Year Filter" And InStr(v_year, FilterYear) = 0 And v_year <> "") Then Exit Do
-				
-				If artist <> "" Then ReleaseDesc = ReleaseDesc & " " & artist End If
-				If artist <> "" And title <> "" Then ReleaseDesc = ReleaseDesc & " -" End If
-				If title <> "" Then ReleaseDesc = ReleaseDesc & " " & title End If
-				If Format <> "" Then ReleaseDesc = ReleaseDesc & " [" & Format & "]" End If
-				If Label <> "" Then ReleaseDesc = ReleaseDesc & " " & Label End If
-				If Country <> "" Then ReleaseDesc = ReleaseDesc & " / " & Country End If
-				If v_year <> "" Then ReleaseDesc = ReleaseDesc & " (" & v_year & ")" End If
-				If catNo <> "" Then ReleaseDesc = ReleaseDesc & " catNo:" & catNo End If
-				If Rtype = "master" Then ReleaseDesc = ReleaseDesc & " *" End If
-				
-				Combo.AddItem "(" & SongCount & "/" & SongCountMax & ") " & ReleaseDesc
-				ResultsReleaseID.Add response(ArrayName)(r)("id")
-				SongCount = SongCount + 1
-			Loop While False
+				ReleaseDesc = ""
+				Do
+					If FilterMediaType = "Use MediaType Filter" And Format <> "" Then
+						FilterFound = False
+						For a = 1 To MediaTypeList.Count - 1
+							If InStr(Format, MediaTypeList.Item(a)) <> 0 And MediaTypeFilterList.Item(a) = "1" Then FilterFound = True
+						Next
+						If FilterFound = False Then Exit Do
+					End If
+					If(FilterMediaType <> "None" And FilterMediaType <> "Use MediaType Filter" And InStr(format, FilterMediaType) = 0 And format <> "") Then Exit Do
+					
+					If FilterMediaFormat = "Use MediaFormat Filter" And format <> "" Then
+						FilterFound = False
+						For a = 1 To MediaFormatList.Count - 1
+							If InStr(format, MediaFormatList.Item(a)) <> 0 And MediaFormatFilterList.Item(a) = "1" Then FilterFound = True
+						Next
+						If FilterFound = False Then Exit Do
+					End If
+					If(FilterMediaFormat <> "None" And FilterMediaFormat <> "Use MediaFormat Filter" And InStr(format, FilterMediaFormat) = 0 And Format <> "") Then Exit Do
+					
+					If FilterCountry = "Use Country Filter" And country <> "" Then
+						FilterFound = False
+						For a = 1 To CountryList.Count - 1
+							If InStr(country, CountryList.Item(a)) <> 0 And CountryFilterList.Item(a) = "1" Then FilterFound = True
+						Next
+						If FilterFound = False Then Exit Do
+					End If
+					If(FilterCountry <> "None" And FilterCountry <> "Use Country Filter" And InStr(country, FilterCountry) = 0 And country <> "") Then Exit Do
+					
+					If FilterYear = "Use Year Filter" And v_year <> "" Then
+						FilterFound = False
+						For a = 1 To YearList.Count - 1
+							If InStr(v_year, YearList.Item(a)) <> 0 And YearFilterList.Item(a) = "1" Then FilterFound = True
+						Next
+						If FilterFound = False Then Exit Do
+					End If
+					If(FilterYear <> "None" And FilterYear <> "Use Year Filter" And InStr(v_year, FilterYear) = 0 And v_year <> "") Then Exit Do
+					
+					If artist <> "" Then ReleaseDesc = ReleaseDesc & " " & artist End If
+					If artist <> "" And title <> "" Then ReleaseDesc = ReleaseDesc & " -" End If
+					If title <> "" Then ReleaseDesc = ReleaseDesc & " " & title End If
+					If Format <> "" Then ReleaseDesc = ReleaseDesc & " [" & Format & "]" End If
+					If Label <> "" Then ReleaseDesc = ReleaseDesc & " " & Label End If
+					If Country <> "" Then ReleaseDesc = ReleaseDesc & " / " & Country End If
+					If v_year <> "" Then ReleaseDesc = ReleaseDesc & " (" & v_year & ")" End If
+					If catNo <> "" Then ReleaseDesc = ReleaseDesc & " catNo:" & catNo End If
+					If Rtype = "master" Then ReleaseDesc = ReleaseDesc & " *" End If
+					
+					Combo.AddItem "(" & SongCount & "/" & SongCountMax & ") " & ReleaseDesc
+					ResultsReleaseID.Add response(ArrayName)(r)("id")
+					SongCount = SongCount + 1
+				Loop While False
+			Next
 		Next
 	End If
 	WriteLog "Stop JSONParser_find_result"
@@ -4777,7 +4801,6 @@ Sub NewSearch(CurrentSelectedAlbum)
 			CurrentSelectedAlbum = CurrentSelectedAlbum + 1
 		End If
 	End If
-	WriteLog "Stop NewSearch"
 
 End Sub
 
@@ -5610,7 +5633,7 @@ End Function
 
 Sub ShowCountryFilter
 	
-	Dim Form, iWidth, CountColumn, filterHTML, filterHTMLDoc, WebBrowser2, countrybutton, FilterFound
+	Dim Form, iWidth, CountColumn, filterHTML, filterHTMLDoc, WebBrowser3, countrybutton, FilterFound
 	Dim i, a
 	Set Form = UI.NewForm
 	Form.Common.Width = 675
@@ -5669,18 +5692,18 @@ Sub ShowCountryFilter
 	Btn4.Common.Anchors = 2+4
 	Script.RegisterEvent Btn4, "OnClick", "Btn7Click"
 	
-	Set WebBrowser2 = UI.NewActiveX(Form, "Shell.Explorer")
-	WebBrowser2.Common.Align = 5
-	WebBrowser2.Common.ControlName = "WebBrowser2"
-	WebBrowser2.Common.Top = 100
-	WebBrowser2.Common.Left = 100
+	Set WebBrowser3 = UI.NewActiveX(Form, "Shell.Explorer")
+	WebBrowser3.Common.Align = 5
+	WebBrowser3.Common.ControlName = "WebBrowser3"
+	WebBrowser3.Common.Top = 100
+	WebBrowser3.Common.Left = 100
 	
-	SDB.Objects("WebBrowser2") = WebBrowser2
-	WebBrowser2.Interf.Visible = True
-	WebBrowser2.Common.BringToFront
+	SDB.Objects("WebBrowser3") = WebBrowser3
+	WebBrowser3.Interf.Visible = True
+	WebBrowser3.Common.BringToFront
 	
-	WebBrowser2.SetHTMLDocument filterHTML
-	Set filterHTMLDoc = WebBrowser2.Interf.Document
+	WebBrowser3.SetHTMLDocument filterHTML
+	Set filterHTMLDoc = WebBrowser3.Interf.Document
 	
 	For i = 1 To CountryList.Count - 1
 		Set countrybutton = filterHTMLDoc.getElementById("Filter" & i)
@@ -5707,12 +5730,12 @@ Sub ShowCountryFilter
 			FilterCountry = "Use Country Filter"
 			CountryFilterList.Item(0) = "1"
 		End If
-		SDB.Objects("WebBrowser2") = Nothing
+		SDB.Objects("WebBrowser3") = Nothing
 		SDB.Objects("FilterForm") = Nothing
 		SDB.Objects("Filter") = Nothing
 		FindResults SavedSearchTerm, "", ""
 	Else
-		SDB.Objects("WebBrowser2") = Nothing
+		SDB.Objects("WebBrowser3") = Nothing
 		SDB.Objects("FilterForm") = Nothing
 		SDB.Objects("Filter") = Nothing
 	End If
@@ -5722,7 +5745,7 @@ End Sub
 
 Sub ShowMediaFormatFilter
 	
-	Dim Form, iWidth, CountColumn, filterHTML, filterHTMLDoc, WebBrowser2, MediaFormatButton, FilterFound
+	Dim Form, iWidth, CountColumn, filterHTML, filterHTMLDoc, WebBrowser3, MediaFormatButton, FilterFound
 	Dim i, a
 	Set Form = UI.NewForm
 	Form.Common.Width = 380
@@ -5782,18 +5805,18 @@ Sub ShowMediaFormatFilter
 	Btn4.Common.Anchors = 2+4
 	Script.RegisterEvent Btn4, "OnClick", "Btn7Click"
 	
-	Set WebBrowser2 = UI.NewActiveX(Form, "Shell.Explorer")
-	WebBrowser2.Common.Align = 5
-	WebBrowser2.Common.ControlName = "WebBrowser2"
-	WebBrowser2.Common.Top = 100
-	WebBrowser2.Common.Left = 100
+	Set WebBrowser3 = UI.NewActiveX(Form, "Shell.Explorer")
+	WebBrowser3.Common.Align = 5
+	WebBrowser3.Common.ControlName = "WebBrowser3"
+	WebBrowser3.Common.Top = 100
+	WebBrowser3.Common.Left = 100
 	
-	SDB.Objects("WebBrowser2") = WebBrowser2
-	WebBrowser2.Interf.Visible = True
-	WebBrowser2.Common.BringToFront
+	SDB.Objects("WebBrowser3") = WebBrowser3
+	WebBrowser3.Interf.Visible = True
+	WebBrowser3.Common.BringToFront
 	
-	WebBrowser2.SetHTMLDocument filterHTML
-	Set filterHTMLDoc = WebBrowser2.Interf.Document
+	WebBrowser3.SetHTMLDocument filterHTML
+	Set filterHTMLDoc = WebBrowser3.Interf.Document
 	
 	For i = 1 To MediaFormatList.Count - 1
 		Set MediaFormatButton = filterHTMLDoc.getElementById("Filter" & i)
@@ -5820,12 +5843,12 @@ Sub ShowMediaFormatFilter
 			FilterMediaFormat = "Use MediaFormat Filter"
 			MediaFormatFilterList.Item(0) = "1"
 		End If
-		SDB.Objects("WebBrowser2") = Nothing
+		SDB.Objects("WebBrowser3") = Nothing
 		SDB.Objects("FilterForm") = Nothing
 		SDB.Objects("Filter") = Nothing
 		FindResults SavedSearchTerm, "", ""
 	Else
-		SDB.Objects("WebBrowser2") = Nothing
+		SDB.Objects("WebBrowser3") = Nothing
 		SDB.Objects("FilterForm") = Nothing
 		SDB.Objects("Filter") = Nothing
 	End If
@@ -5835,7 +5858,7 @@ End Sub
 
 Sub ShowMediaTypeFilter
 	
-	Dim Form, iWidth, CountColumn, filterHTML, filterHTMLDoc, WebBrowser2, MediaTypeButton, FilterFound
+	Dim Form, iWidth, CountColumn, filterHTML, filterHTMLDoc, WebBrowser3, MediaTypeButton, FilterFound
 	Dim i, a
 	Set Form = UI.NewForm
 	Form.Common.Width = 420
@@ -5895,18 +5918,18 @@ Sub ShowMediaTypeFilter
 	Btn4.Common.Anchors = 2+4
 	Script.RegisterEvent Btn4, "OnClick", "Btn7Click"
 	
-	Set WebBrowser2 = UI.NewActiveX(Form, "Shell.Explorer")
-	WebBrowser2.Common.Align = 5
-	WebBrowser2.Common.ControlName = "WebBrowser2"
-	WebBrowser2.Common.Top = 100
-	WebBrowser2.Common.Left = 100
+	Set WebBrowser3 = UI.NewActiveX(Form, "Shell.Explorer")
+	WebBrowser3.Common.Align = 5
+	WebBrowser3.Common.ControlName = "WebBrowser3"
+	WebBrowser3.Common.Top = 100
+	WebBrowser3.Common.Left = 100
 	
-	SDB.Objects("WebBrowser2") = WebBrowser2
-	WebBrowser2.Interf.Visible = True
-	WebBrowser2.Common.BringToFront
+	SDB.Objects("WebBrowser3") = WebBrowser3
+	WebBrowser3.Interf.Visible = True
+	WebBrowser3.Common.BringToFront
 	
-	WebBrowser2.SetHTMLDocument filterHTML
-	Set filterHTMLDoc = WebBrowser2.Interf.Document
+	WebBrowser3.SetHTMLDocument filterHTML
+	Set filterHTMLDoc = WebBrowser3.Interf.Document
 	
 	For i = 1 To MediaTypeList.Count - 1
 		Set MediaTypeButton = filterHTMLDoc.getElementById("Filter" & i)
@@ -5933,12 +5956,12 @@ Sub ShowMediaTypeFilter
 			FilterMediaType = "Use MediaType Filter"
 			MediaTypeFilterList.Item(0) = "1"
 		End If
-		SDB.Objects("WebBrowser2") = Nothing
+		SDB.Objects("WebBrowser3") = Nothing
 		SDB.Objects("FilterForm") = Nothing
 		SDB.Objects("Filter") = Nothing
 		FindResults SavedSearchTerm, "", ""
 	Else
-		SDB.Objects("WebBrowser2") = Nothing
+		SDB.Objects("WebBrowser3") = Nothing
 		SDB.Objects("FilterForm") = Nothing
 		SDB.Objects("Filter") = Nothing
 	End If
@@ -5948,7 +5971,7 @@ End Sub
 
 Sub ShowYearFilter
 	
-	Dim Form, iWidth, CountColumn, filterHTML, filterHTMLDoc, YearButton, FilterFound
+	Dim Form, iWidth, CountColumn, filterHTML, filterHTMLDoc, WebBrowser3, YearButton, FilterFound
 	Dim i, a, row
 	Set Form = UI.NewForm
 	Form.Common.Width = 550
@@ -6016,18 +6039,18 @@ Sub ShowYearFilter
 	Btn4.Common.Anchors = 2+4
 	Script.RegisterEvent Btn4, "OnClick", "Btn7Click"
 	
-	Set WebBrowser2 = UI.NewActiveX(Form, "Shell.Explorer")
-	WebBrowser2.Common.Align = 5
-	WebBrowser2.Common.ControlName = "WebBrowser2"
-	WebBrowser2.Common.Top = 100
-	WebBrowser2.Common.Left = 100
+	Set WebBrowser3 = UI.NewActiveX(Form, "Shell.Explorer")
+	WebBrowser3.Common.Align = 5
+	WebBrowser3.Common.ControlName = "WebBrowser3"
+	WebBrowser3.Common.Top = 100
+	WebBrowser3.Common.Left = 100
 	
-	SDB.Objects("WebBrowser2") = WebBrowser2
-	WebBrowser2.Interf.Visible = True
-	WebBrowser2.Common.BringToFront
+	SDB.Objects("WebBrowser3") = WebBrowser3
+	WebBrowser3.Interf.Visible = True
+	WebBrowser3.Common.BringToFront
 	
-	WebBrowser2.SetHTMLDocument filterHTML
-	Set filterHTMLDoc = WebBrowser2.Interf.Document
+	WebBrowser3.SetHTMLDocument filterHTML
+	Set filterHTMLDoc = WebBrowser3.Interf.Document
 	
 	For i = 1 To YearList.Count - 1
 		Set Yearbutton = filterHTMLDoc.getElementById("Filter" & i)
@@ -6054,12 +6077,12 @@ Sub ShowYearFilter
 			FilterYear = "Use Year Filter"
 			YearFilterList.Item(0) = "1"
 		End If
-		SDB.Objects("WebBrowser2") = Nothing
+		SDB.Objects("WebBrowser3") = Nothing
 		SDB.Objects("FilterForm") = Nothing
 		SDB.Objects("Filter") = Nothing
 		FindResults SavedSearchTerm, "", ""
 	Else
-		SDB.Objects("WebBrowser2") = Nothing
+		SDB.Objects("WebBrowser3") = Nothing
 		SDB.Objects("FilterForm") = Nothing
 		SDB.Objects("Filter") = Nothing
 	End If
@@ -6067,12 +6090,13 @@ Sub ShowYearFilter
 End Sub
 
 Sub Btn6Click
-	
+
+	'Check all
 	Dim FilterList, filterHTMLDoc, a, filterbutton
-	Dim templateHTMLDoc
-	Set WebBrowser2 = SDB.Objects("WebBrowser2")
+	Dim templateHTMLDoc, WebBrowser3
+	Set WebBrowser3 = SDB.Objects("WebBrowser3")
 	Set FilterList = SDB.Objects("Filter")
-	Set filterHTMLDoc = WebBrowser2.Interf.Document
+	Set filterHTMLDoc = WebBrowser3.Interf.Document
 	For a = 1 To FilterList.Count - 1
 		Set filterbutton = filterHTMLDoc.getElementById("Filter" & a)
 		filterbutton.checked = True
@@ -6082,12 +6106,13 @@ End Sub
 
 
 Sub Btn7Click
-	
+
+	'UnCheck all
 	Dim FilterList, filterHTMLDoc, a, filterbutton
-	Dim templateHTMLDoc
-	Set WebBrowser2 = SDB.Objects("WebBrowser2")
+	Dim templateHTMLDoc, WebBrowser3
+	Set WebBrowser3 = SDB.Objects("WebBrowser3")
 	Set FilterList = SDB.Objects("Filter")
-	Set filterHTMLDoc = WebBrowser2.Interf.Document
+	Set filterHTMLDoc = WebBrowser3.Interf.Document
 	For a = 1 To FilterList.Count - 1
 		Set filterbutton = filterHTMLDoc.getElementById("Filter" & a)
 		filterbutton.checked = False
