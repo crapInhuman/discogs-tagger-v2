@@ -2,7 +2,7 @@ Option Explicit
 '
 ' Discogs Batch Tagger Script for MediaMonkey ( crap_inhuman with a little help from my friends Let & eepman )
 '
-Const VersionStr = "v2.22"
+Const VersionStr = "v2.23"
 
 'Changes from 2.22 to 2.23 by crap_inhuman in 10.2014
 '		Added error-check for wrong amount of countríes
