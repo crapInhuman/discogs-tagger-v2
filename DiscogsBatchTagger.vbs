@@ -2,7 +2,11 @@ Option Explicit
 '
 ' Discogs Batch Tagger Script for MediaMonkey ( crap_inhuman with a little help from my friends Let & eepman )
 '
-Const VersionStr = "v2.24"
+Const VersionStr = "v2.25"
+
+'Changes from 2.24 to 2.25 by crap_inhuman in 07.2015
+'		Comma removed after artist
+
 
 'Changes from 2.23 to 2.24 by crap_inhuman in 05.2015
 '		Small bugfixes
@@ -110,13 +114,11 @@ Dim WebBrowser, WebBrowser2
 ' decoded json object representing currently selected release
 Dim CurrentRelease, ReleaseSkip
 
-Dim Form
-
 REM Dim cTab : cTab = 1
 
 Dim UI, ini
 
-Dim ResultsReleaseID ' result list
+Dim ResultsReleaseID
 Dim CurrentReleaseID
 Dim tracklistHTML
 
@@ -180,7 +182,8 @@ Rem SDB.ShutdownAfterDisconnect = False
 Rem Dim Script : Set Script = CreateObject("SongsDB.SDBScriptControl")
 Set UI = SDB.UI
 Rem Call BatchDiscogsSearch
-Dim sTemp : sTemp = SDB.TemporaryFolder
+Dim sTemp
+sTemp = SDB.TemporaryFolder
 
 ' MediaMonkey calls this method whenever a search is started using this script
 Sub BatchDiscogsSearch()
@@ -967,7 +970,6 @@ Sub BatchDiscogsSearch()
 
 	WriteLog "Start Discogs Request"
 
-	
 	ret = authorize_Script
 	If AccessToken = "" Or AccessTokenSecret = "" Then
 		SDB.MessageBox "Authorize failed (Err=1)! You have to authorize Discogs Tagger to use it with your Discogs account !" & vbNewLine & "Please restart Discogs Tagger to authorize it !", mtError, Array(mbOk)
@@ -1030,7 +1032,7 @@ Sub BatchDiscogsSearch()
 	End If
 
 	Rem 'Create the window to be shown
-	Dim BottomF
+	Dim BottomF, Form
 	Set Form = UI.NewForm
 	Form.FormPosition = 4
 	Form.Caption = "Options for Discogs Search"
@@ -1354,7 +1356,7 @@ Sub LoadMasterResults(MasterId)
 	Dim json
 	Set json = New VbsJson
 
-	Dim title, v_year, artist, artistName, main_release, ReleaseDesc, currentArtist, AlbumArtistTitle, tmp
+	Dim title, v_year, artist, artistName, main_release, ReleaseDesc, currentArtist, tmp
 
 	WriteLog " "
 	WriteLog "+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+"
@@ -1398,34 +1400,9 @@ Sub LoadMasterResults(MasterId)
 			SDB.ProcessMessages
 
 			title = CurrentRelease("title")
-			For Each artist in CurrentRelease("artists")
-				Set currentArtist = CurrentRelease("artists")(artist)
-				If Not CheckUseAnv And currentArtist("anv") <> "" Then
-					artistName = CleanArtistName(currentArtist("anv"))
-				Else
-					artistName = CleanArtistName(currentArtist("name"))
-				End If
-				If SavedArtistID = "" Then SavedArtistID = currentArtist("id")
+			tmp = getArtistsName(CurrentRelease, "artists")
+			AlbumArtistTitle = tmp(0)
 
-				Writelog "SavedArtistID=" & SavedArtistID
-				AlbumArtistTitle = AlbumArtistTitle & artistName
-
-				If currentArtist("join") <> "" Then
-					tmp = currentArtist("join")
-					If tmp = "," Then
-						AlbumArtistTitle = AlbumArtistTitle & ArtistSeparator
-					ElseIf LookForFeaturing(tmp) And CheckFeaturingName Then
-						If TxtFeaturingName = "," or TxtFeaturingName = ";" Then
-							AlbumArtistTitle = AlbumArtistTitle & TxtFeaturingName & " "
-						Else
-							AlbumArtistTitle = AlbumArtistTitle & " " & TxtFeaturingName & " "
-						End If
-					Else
-						AlbumArtistTitle = AlbumArtistTitle & " " & currentArtist("join") & " "
-					End If
-				End If
-			Next
-			
 			If CurrentRelease.Exists("main_release") Then
 				main_release = CurrentRelease("main_release")
 			End If
@@ -1674,42 +1651,11 @@ Sub ReloadResults
 
 
 		' Get artist title
-		For Each artist In CurrentRelease("artists")
-			Set currentArtist = CurrentRelease("artists")(artist)
-			If Not CheckUseAnv And currentArtist("anv") <> "" Then
-				artistName = CleanArtistName(currentArtist("anv"))
-				' !!!!!artistName <- currentArtist
-			Else
-				artistName = CleanArtistName(currentArtist("name"))
-				' !!!!!artistName <- currentArtist
-			End If
-			If SavedArtistId = "" Then SavedArtistId = currentArtist("id")
+		tmp = getArtistsName(CurrentRelease, "artists")
 
-			If (AlbumArtist = "") Then
-				AlbumArtist = artistName
-			End If
-
-			Writelog("SavedArtistId=" & SavedArtistId)
-			AlbumArtistTitle = AlbumArtistTitle & artistName
-
-			If currentArtist("join") <> "" Then
-				tmp = currentArtist("join")
-				If tmp = "," Then
-					AlbumArtistTitle = AlbumArtistTitle & ArtistSeparator
-				ElseIf LookForFeaturing(tmp) And CheckFeaturingName Then
-					If TxtFeaturingName = "," or TxtFeaturingName = ";" Then
-						AlbumArtistTitle = AlbumArtistTitle & TxtFeaturingName & " "
-					Else
-						AlbumArtistTitle = AlbumArtistTitle & " " & TxtFeaturingName & " "
-					End If
-				Else
-					AlbumArtistTitle = AlbumArtistTitle & " " & currentArtist("join") & " "
-				End If
-			End If
-		Next
+		AlbumArtist = tmp(2)
+		AlbumArtistTitle = tmp(0)
 		Writelog("AlbumArtistTitle=" & AlbumArtistTitle)
-
-		If Right(AlbumArtistTitle, 3) = " , " Then AlbumArtistTitle = Left(AlbumArtistTitle, Len(AlbumArtistTitle)-3)
 
 		If (Not CheckAlbumArtistFirst) Then
 			AlbumArtist = AlbumArtistTitle
@@ -1722,7 +1668,7 @@ Sub ReloadResults
 			AlbumArtistTitle = TxtVarious
 		End If
 
-
+		WriteLog " "
 		WriteLog "ExtraArtists"
 		If currentRelease.Exists("extraartists") Then
 			For Each extraArtist In CurrentRelease("extraartists")
@@ -2023,7 +1969,14 @@ Sub ReloadResults
 							If subTrackTitle = "" Then
 								subTrackTitle = trackName
 								If SubTrackNameSelection = False Then
+									UnselectedTracks(iTrackNum-1) = ""
 									UnselectedTracks(iTrackNum) = "x"
+									If CheckLeadingZero = True And iAutoTrackNumber < 10 Then
+										tracksNum.Item(iTrackNum-1) = "0" & iAutoTrackNumber
+									Else
+										tracksNum.Item(iTrackNum-1) = iAutoTrackNumber
+									End If
+									iAutoTrackNumber = iAutoTrackNumber + 1
 								Else
 									UnselectedTracks(iTrackNum) = ""
 								End If
@@ -2159,50 +2112,16 @@ Sub ReloadResults
 			Next
 
 			artistList = ""
-			tmpJoin = ""
+
 			WriteLog " "
 			WriteLog "Search for extra TrackArtist"
 			If currentTrack.Exists("artists") Then
-				FoundFeaturing = False
-				For Each artist In currentTrack("artists")
-					Set currentArtist = currentTrack("artists")(artist)
-					If (currentArtist("anv") <> "") And Not CheckUseAnv Then
-						tmpTrackArtist = CleanArtistName(currentArtist("anv"))
-					Else
-						tmpTrackArtist = CleanArtistName(currentArtist("name"))
-					End If
-					If FoundFeaturing = False Then
-						artistList = artistList & tmpTrackArtist
-					Else
-						If TrackFeaturing = "" Then
-							If CheckFeaturingName Then
-								TrackFeaturing = TxtFeaturingName & " " & tmpTrackArtist
-							Else
-								TrackFeaturing = tmpJoin & " " & tmpTrackArtist
-							End If
-						Else
-							TrackFeaturing = TrackFeaturing & ", " & tmpTrackArtist
-						End If
-
-						WriteLog "TrackFeaturing=" & TrackFeaturing
-					End If
-					'TitleFeaturing
-					If currentArtist("join") <> "" Then
-						If LookForFeaturing(currentArtist("join")) Then
-							FoundFeaturing = True
-							tmpJoin = currentArtist("join")
-						Else
-							artistList = artistList & " " & currentArtist("join") & " "
-							FoundFeaturing = False
-						End If
-					End If
-					WriteLog "artistlist=" & artistlist
-				Next
+				tmp = getArtistsName(CurrentTrack, "artists")
+				artistList = tmp(0)
+				TrackFeaturing = tmp(1)
 			End If
-
 			If artistList = "" Then artistList = AlbumArtistTitle
 
-			If Right(artistList, 3) = " , " Then artistList = Left(artistList, Len(artistList)-3)
 			If currentTrack.Exists("extraartists") Then
 				WriteLog " "
 				For Each extra In currentTrack("extraartists")
@@ -3450,7 +3369,7 @@ End Function
 Sub FormatSearchResultsViewer(TracksNum, TracksCD, Durations, AlbumArtist, AlbumArtistTitle, ArtistTitles, AlbumTitle, ReleaseDate, OriginalDate, Genres, Styles, theLabels, theCountry, theArt, releaseID, Catalog, Lyricists, Composers, Conductors, Producers, InvolvedPeople, theFormat, theMaster, comment, DiscogsTracksNum, DataQuality)
 
 	WriteLog "Start FormatSearchResultsViewer"
-	Dim templateHTML, checkBox, text, listBox, submitButton
+	Dim checkBox, text, listBox, submitButton
 	Dim SelectedTracksCount, UnSelectedTracksCount
 	Dim SubTrackFlag
 	Dim i, theTracks, currentCD, theGenres
@@ -4202,7 +4121,7 @@ Sub FormatErrorMessage(ErrorMessage)
 
 	WriteLog("Start FormatErrorMessage")
 	WriteLog("ErrorMessage = " & ErrorMessage)
-	Dim templateHTML, listBox, templateHTMLDoc, submitButton
+	Dim listBox, templateHTMLDoc, submitButton
 	templateHTML = GetHeader()
 	templateHTML = templateHTML &  "<tr>"
 	templateHTML = templateHTML &  "<td colspan=4 align=center><p><b>" & ErrorMessage & "</b></p></td>"
@@ -7015,3 +6934,69 @@ Function getimages(DownloadDest, LocalFile)
 	WriteLog "Stop getimages"
 
 End function
+
+Function getArtistsName(Current, Role)
+
+	REM Current = CurrentReleae
+	REM Role = "artists"
+
+	REM Current = CurrentTrack
+	REM Role = "artists"
+	Dim artist, currentArtist, artistName, tmpArtistSeparator, tmp
+	Dim FoundFeaturing
+
+	Dim Artists(2)
+
+	SavedArtistID = ""
+	FoundFeaturing = False
+
+	For Each artist in Current(Role)
+		Set currentArtist = Current(Role)(artist)
+		If Not CheckUseAnv And currentArtist("anv") <> "" Then
+			artistName = CleanArtistName(currentArtist("anv"))
+		Else
+			artistName = CleanArtistName(currentArtist("name"))
+		End If
+		If SavedArtistID = "" Then SavedArtistID = currentArtist("id")
+
+		If Artists(0) = "" Then
+			Artists(0) = artistName
+			Artists(2) = artistName
+		Else
+			If FoundFeaturing = False Then
+				Artists(0) = Artists(0) & tmpArtistSeparator & artistName
+			Else
+				If Artists(1) = "" Then
+					Artists(1) = tmpArtistSeparator & artistName
+				Else
+					Artists(1) = Artists(1) & ", " & artistName
+				End If
+			End If
+		End If
+
+		tmp = ""
+		If currentArtist("join") <> "" Then
+			tmp = Trim(currentArtist("join"))
+		End If
+
+		If tmp <> "" Then
+			If tmp = "," Then
+				tmpArtistSeparator = ArtistSeparator
+			ElseIf LookForFeaturing(tmp) And CheckFeaturingName Then
+				tmpArtistSeparator = TxtFeaturingName & " "
+			Else
+				tmpArtistSeparator = tmp & " "
+			End If
+			If LookForFeaturing(tmp) = True Then FoundFeaturing = True
+		Else
+			tmpArtistSeparator = ""
+		End If
+	Next
+
+	If Right(Artists(0), 2) = ", " Then Artists(0) = Left(Artists(0), Len(Artists(0))-2)
+	Artists(0) = Trim(Artists(0))
+
+	getArtistsName = Artists
+
+End Function
+
